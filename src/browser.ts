@@ -29,14 +29,15 @@ export function createBrowserBackend(options: BrowserOptions = {}) {
 
 /**
  * The words of a command line; the leading `$` and `skill-atlas` are optional. One pair of
- * matching quotes around a word is dropped, as a shell would: `--name-filter 'web-*'`.
+ * matching quotes around a word, or around an option's value after `=`, is dropped, as a shell
+ * would: `--name-filter 'web-*'`, `--name-filter='web-*'`.
  */
 function words(commandLine: string): string[] {
   const words = commandLine
     .trim()
     .split(/\s+/)
     .filter(Boolean)
-    .map((word) => (word.length >= 2 && /^(['"]).*\1$/.test(word) ? word.slice(1, -1) : word));
+    .map((word) => word.replace(/^(--[^='"]+=)?(['"])(.*)\2$/, '$1$3'));
   if (words[0] === '$') words.shift();
   if (words[0] === 'skill-atlas') words.shift();
   return words;

@@ -307,7 +307,10 @@ test('the browser terminal drops the quotes around a glob, as the shell does', a
   assert.match(unquoted, /^JetBrains\/monorepo · 1 skill\ncommits — /);
   assert.equal(await browser.run(`$ skill-atlas ${scan} 'com*'`), unquoted);
   assert.equal(await browser.run(`${scan} "com*"`), unquoted);
+  assert.equal(await browser.run(`${scan}='com*'`), unquoted);
+  assert.equal(await browser.run(`${scan}="com*"`), unquoted);
   // Only a matching pair: a lone quote is part of the pattern.
   assert.equal(await browser.run(`${scan} 'com*`), 'JetBrains/monorepo · 0 skills');
   assert.equal(await browser.run(`${scan} 'com*"`), 'JetBrains/monorepo · 0 skills');
+  assert.equal(await browser.run(`${scan}='com*`), 'JetBrains/monorepo · 0 skills');
 });
