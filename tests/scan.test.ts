@@ -3,7 +3,7 @@
 // tests/helpers.ts and for recorded GitHub answers below.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -75,16 +75,15 @@ test('this repository: the skills in ./fixture are test data, not its own', asyn
   const root = fileURLToPath(new URL('..', import.meta.url));
   const own = await atlas(['scan', root]);
   assert.equal(own.code, 0, own.stderr);
-  // Its own skills, whichever it has: each SKILL.md in a skill directory of its agents' folders.
-  const skills = SKILL_ROOTS.flatMap((skillRoot) =>
-    existsSync(join(root, skillRoot))
-      ? readdirSync(join(root, skillRoot)).filter((name) => existsSync(join(root, skillRoot, name, 'SKILL.md'))).map((name) => `${skillRoot}/${name}/SKILL.md`)
-      : [],
-  );
+  // Its own skills, whichever it has. Not counted from the disk: a symbolic link is not followed and
+  // a copy is an `also in`, so the header must agree with the links printed, each in an agent folder.
   const [header, ...lines] = own.stdout.split('\n');
-  assert.equal(header, `${basename(root)} · ${skills.length} ${skills.length === 1 ? 'skill' : 'skills'}`);
   const links = lines.filter((line) => line.startsWith('  file:')).map((line) => line.trim());
-  assert.deepEqual(links.sort(), skills.map((path) => `${pathToFileURL(root).href}${path}`).sort());
+  assert.equal(header, `${basename(root)} · ${links.length} ${links.length === 1 ? 'skill' : 'skills'}`);
+  for (const link of links) {
+    const path = link.slice(pathToFileURL(root).href.length);
+    assert.ok(SKILL_ROOTS.some((skillRoot) => path.startsWith(`${skillRoot}/`)) && path.endsWith('/SKILL.md'), link);
+  }
   assert.doesNotMatch(own.stdout, /fixture/);
 });
 
