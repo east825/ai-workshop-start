@@ -3,13 +3,13 @@
 // tests/helpers.ts and for recorded GitHub answers below.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { run } from '../src/commands.ts';
-import { findSkills } from '../src/core/find.ts';
+import { findSkills, SKILL_ROOTS } from '../src/core/find.ts';
 import { openGitHub } from '../src/core/github.ts';
 import { parseSkill } from '../src/core/parse.ts';
 import { replay, type Recording } from '../src/core/replay.ts';
@@ -74,7 +74,17 @@ test('this repository: the skills in ./fixture are test data, not its own', asyn
   const root = fileURLToPath(new URL('..', import.meta.url));
   const own = await atlas(['scan', root]);
   assert.equal(own.code, 0, own.stderr);
-  assert.equal(own.stdout, `${basename(root)} · 0 skills`);
+  // Its own skills, whichever it has: each SKILL.md in a skill directory of its agents' folders.
+  const skills = SKILL_ROOTS.flatMap((skillRoot) =>
+    existsSync(join(root, skillRoot))
+      ? readdirSync(join(root, skillRoot)).filter((name) => existsSync(join(root, skillRoot, name, 'SKILL.md'))).map((name) => `${skillRoot}/${name}/SKILL.md`)
+      : [],
+  );
+  const [header, ...lines] = own.stdout.split('\n');
+  assert.equal(header, `${basename(root)} · ${skills.length} ${skills.length === 1 ? 'skill' : 'skills'}`);
+  const links = lines.filter((line) => line.startsWith('  file:')).map((line) => line.trim());
+  assert.deepEqual(links.sort(), skills.map((path) => `${pathToFileURL(root).href}${path}`).sort());
+  assert.doesNotMatch(own.stdout, /fixture/);
 });
 
 test('only skills in an agent folder, outside test data and product resources, are the repository\'s own', () => {
