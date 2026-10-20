@@ -1,10 +1,12 @@
 // The decisions in spec/web.md, checked on the running web view: its page and /api/scan, with
 // GitHub answering from recordings (tests/helpers.ts and below), and `skill-atlas serve` itself.
+// The page's own script runs in jsdom, against the same server.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { get } from 'node:http';
 import { once } from 'node:events';
 import { createInterface } from 'node:readline';
+import { JSDOM } from 'jsdom';
 import { after, test } from 'node:test';
 import { run } from '../src/commands.ts';
 import { openGitHub } from '../src/core/github.ts';
@@ -37,11 +39,30 @@ const SKILLS: Recording = {
     status: 200,
     body: '---\nname: broken\ndescription: a: b: c\n---\n',
   },
+  // What GitHub answers once the token's rate limit is used up.
+  'https://api.github.com/repos/JetBrains/limited': {
+    status: 403,
+    body: { message: 'API rate limit exceeded for user ID 1. (But here is the good news: ...)' },
+  },
+};
+
+/** JetBrains/markup: a skill whose name and description are markup. */
+const MARKUP: Recording = {
+  'https://api.github.com/repos/JetBrains/markup': { status: 200, body: { full_name: 'JetBrains/markup', default_branch: 'main' } },
+  'https://api.github.com/repos/JetBrains/markup/commits/main': { status: 200, body: { sha: COMMIT } },
+  'https://api.github.com/search/code?q=filename:SKILL.md+repo:JetBrains/markup&per_page=100&page=1': {
+    status: 200,
+    body: { total_count: 1, items: [{ path: '.claude/skills/x/SKILL.md' }] },
+  },
+  [`https://raw.githubusercontent.com/JetBrains/markup/${COMMIT}/.claude/skills/x/SKILL.md`]: {
+    status: 200,
+    body: '---\nname: "<b>bold</b>"\ndescription: "<img src=x onerror=alert(1)> Runs."\n---\n',
+  },
 };
 
 /** The URLs the web view asked to open: a local directory must never be among them. */
 const opened: string[] = [];
-const recorded = replay(SKILLS, github);
+const recorded = replay({ ...SKILLS, ...MARKUP }, github);
 const server = createWebServer({
   open: (url) => {
     opened.push(url);
@@ -164,9 +185,109 @@ test('/api/scan: a failed scan → the CLI\'s message', async () => {
     notFound.close();
   }
 
+  const limited = await api('JetBrains/limited');
+  assert.equal(limited.status, 400);
+  assert.equal(limited.body.error, 'GitHub rate limit reached; try again in a minute');
+
   const offline = await api('JetBrains/not-answered');
   assert.equal(offline.status, 400);
   assert.equal(offline.body.error, 'Cannot reach GitHub: not recorded: https://api.github.com/repos/JetBrains/not-answered');
+});
+
+/** The page at the URL, its script running, its fetch going to the test server. */
+async function page(url: string) {
+  const dom = await JSDOM.fromURL(url, {
+    runScripts: 'dangerously',
+    beforeParse: (window) => {
+      window.fetch = (input: string | URL | Request, init?: RequestInit) => fetch(new URL(String(input), window.location.href), init);
+    },
+  });
+  return dom.window;
+}
+
+/** Waits for the pane to show a result or an error, after `Scanning…`; a broken script shows neither. */
+async function pane(window: Awaited<ReturnType<typeof page>>) {
+  const results = window.document.getElementById('results')!;
+  const deadline = Date.now() + 5000;
+  while (!results.querySelector('h2, .error')) {
+    if (Date.now() > deadline) assert.fail(`the pane shows no result: ${results.textContent || '(empty)'}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(window.document.querySelector('button')!.disabled, false);
+  return results;
+}
+
+/** Each listed skill: its linked name, description and copies, as shown. */
+function listed(results: HTMLElement) {
+  return [...results.querySelectorAll(':scope > ul:not(.warnings) > li')].map((item) => ({
+    name: item.querySelector('a.name')!.textContent,
+    link: item.querySelector<HTMLAnchorElement>('a.name')!.href,
+    description: item.querySelector('.description')?.textContent,
+    copies: item.querySelector('.copies')?.textContent,
+  }));
+}
+
+test('the pane: a pasted repository, its skills sorted by name, linked, with copies and warnings below', async () => {
+  const window = await page(`${base}/`);
+  window.document.querySelector<HTMLInputElement>('#repo')!.value = ' https://github.com/JetBrains/skills/tree/main ';
+  window.document.querySelector<HTMLFormElement>('#scan')!.requestSubmit();
+  const results = await pane(window);
+
+  const title = results.querySelector('h2')!;
+  assert.equal(title.textContent, 'JetBrains/skills · 2 skills');
+  assert.equal(title.querySelector('a')!.href, 'https://github.com/JetBrains/skills');
+  assert.deepEqual(listed(results), [
+    { name: 'broken', link: `https://github.com/JetBrains/skills/blob/${COMMIT}/.agents/skills/broken/SKILL.md`, description: undefined, copies: undefined },
+    {
+      name: 'review',
+      link: `https://github.com/JetBrains/skills/blob/${COMMIT}/.claude/skills/review/SKILL.md`,
+      description: 'Review a pull request.',
+      copies: 'also in .junie/skills/review/SKILL.md',
+    },
+  ]);
+  // Below the list, not in it.
+  const warnings = [...results.querySelectorAll(':scope > ul.warnings > li')].map((item) => item.textContent);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0]!, /^warning: \.agents\/skills\/broken\/SKILL\.md: malformed front matter: /);
+  assert.equal(results.lastElementChild!.className, 'warnings');
+  // The scan can be shared: the address now has it.
+  assert.equal(new URL(window.location.href).searchParams.get('repo'), 'https://github.com/JetBrains/skills/tree/main');
+});
+
+test('the pane: ?repo= in the address scans at once', async () => {
+  const window = await page(`${base}/?repo=${encodeURIComponent('JetBrains/example')}`);
+  assert.equal(window.document.querySelector<HTMLInputElement>('#repo')!.value, 'JetBrains/example');
+  const results = await pane(window);
+  assert.equal(results.querySelector('h2')!.textContent, 'JetBrains/example · 1 skill');
+  assert.deepEqual(listed(results), [
+    {
+      name: 'commits',
+      link: `https://github.com/JetBrains/example/blob/${EXAMPLE_COMMIT}/.claude/skills/commits/SKILL.md`,
+      description: 'Write commit messages the way this repository does.',
+      copies: undefined,
+    },
+  ]);
+  assert.equal(results.querySelector('.warnings'), null);
+});
+
+test('the pane: a failure → the message, in the pane', async () => {
+  for (const [repo, message] of [
+    ['./fixture', 'Not a GitHub repository: ./fixture. Paste owner/repo or a github.com URL.'],
+    ['JetBrains/not-answered', 'Cannot reach GitHub: not recorded: https://api.github.com/repos/JetBrains/not-answered'],
+    ['JetBrains/limited', 'GitHub rate limit reached; try again in a minute'],
+  ]) {
+    const results = await pane(await page(`${base}/?repo=${encodeURIComponent(repo)}`));
+    assert.equal(results.querySelector('.error')!.textContent, message, repo);
+    assert.equal(results.querySelector('h2'), null);
+  }
+});
+
+test('the pane: what GitHub answers is shown as text, never as markup', async () => {
+  const results = await pane(await page(`${base}/?repo=JetBrains/markup`));
+  assert.deepEqual(listed(results).map(({ name, description }) => ({ name, description })), [
+    { name: '<b>bold</b>', description: '<img src=x onerror=alert(1)> Runs.' },
+  ]);
+  assert.equal(results.querySelector('b, img'), null);
 });
 
 test('anything else → 404; anything but GET → 405', async () => {
