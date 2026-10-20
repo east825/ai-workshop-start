@@ -34,3 +34,13 @@ Skill: id = `repo:path`, name, description, commit
     resources: `test`, `tests`, `testData`, `test-data`, `jvmTest`, `e2e-tests`, `__tests__`, `fixtures`, `mocks`,
     `snapshots`, `resources`, `templates` and the like
   - The skill's own directories are not checked: `.claude/skills/tests` is a skill
+
+## Real repositories
+
+What the scan prints for them is recorded in [tests/data](../tests/data), with GitHub's answers, and checked
+offline; `npm run record` records them again.
+
+- **JetBrains/MPS**: 42 skills, copied between `.agents/skills` and `.claude/skills`: each listed once, `also in`;
+  a tree too large to list at once: only the skill roots, with a warning
+- **JetBrains/android**: a tree too large to list at once, with a warning; 0 skills
+- **JetBrains/koog**: a tree listed at once, no warning; 2 skills in `.claude/skills`

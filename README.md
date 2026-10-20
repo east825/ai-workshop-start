@@ -17,3 +17,5 @@ Set `GITHUB_TOKEN` for a higher GitHub rate limit. `npm test` runs the tests.
 
 - [spec/](spec/): what it does. [AGENTS.md](AGENTS.md): the definition of done.
 - [fixture/](fixture/README.md): a small repository for the tests.
+- [tests/data/](tests/data/): real repositories, JetBrains/MPS, JetBrains/android and JetBrains/koog: what GitHub
+  answered and what the scan printed, replayed by the tests; `npm run record` records them again.
