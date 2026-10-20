@@ -1,5 +1,5 @@
 // Records what GitHub answers for `skill-atlas scan <repository>`, and what the scan prints, into
-// tests/data/<repository>/ for tests/e2e.test.ts to replay offline:
+// tests/data/<repository>/ for tests/recording.test.ts to replay offline:
 //   node tests/record.ts https://github.com/JetBrains/MPS …
 // Without a token, as on CI: the skills are found through the tree. Set GITHUB_TOKEN only if the
 // rate limit stops the recording; it is not stored, and the recording is the same.

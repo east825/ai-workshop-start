@@ -12,7 +12,7 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.ts",
-    "test:e2e": "playwright test",
+    "test:browser": "playwright test",
     "record": "node tests/record.ts https://github.com/JetBrains/MPS https://github.com/JetBrains/android https://github.com/JetBrains/koog",
     "typecheck": "tsc --noEmit"
   },
