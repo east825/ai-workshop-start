@@ -231,3 +231,69 @@ test('rate limit → a message that asks for GITHUB_TOKEN', async () => {
     message: 'GitHub rate limit reached; set GITHUB_TOKEN',
   });
 });
+
+/** The `./fixture` scan with `--name-filter <glob>`: the header, then the names it lists. */
+async function filtered(...args: string[]) {
+  const scanned = await atlas(['scan', FIXTURE, ...args]);
+  assert.equal(scanned.code, 0, scanned.stderr);
+  return scanned.stdout.split('\n').filter((line) => !line.startsWith(' ')).map((line) => line.split(' — ')[0]);
+}
+
+test('--name-filter: only the skills whose whole name matches the glob, counted in the header', async () => {
+  assert.deepEqual(await filtered('--name-filter', 'c*'), ['fixture · 2 skills', 'code-style', 'commits']);
+  assert.deepEqual(await filtered('--name-filter=*-build'), ['fixture · 1 skill', 'web-build']);
+  assert.deepEqual(await filtered('--name-filter', '?ommits'), ['fixture · 1 skill', 'commits']);
+  assert.deepEqual(await filtered('--name-filter', '[rw]*'), ['fixture · 2 skills', 'release-checklist', 'web-build']);
+  assert.deepEqual(await filtered('--name-filter', '[!c]*'), ['fixture · 2 skills', 'release-checklist', 'web-build']);
+  assert.deepEqual(await filtered('--name-filter', '[^a-d]*'), ['fixture · 2 skills', 'release-checklist', 'web-build']);
+  assert.deepEqual(await filtered('--name-filter', '*'), await filtered());
+  // The whole name, case-sensitively; `\` makes `*` literal.
+  assert.deepEqual(await filtered('--name-filter', 'build'), ['fixture · 0 skills']);
+  assert.deepEqual(await filtered('--name-filter', 'C*'), ['fixture · 0 skills']);
+  assert.deepEqual(await filtered('--name-filter', 'web\\*'), ['fixture · 0 skills']);
+});
+
+test('--name-filter: before or after the repository; a matched skill keeps its copies and warnings still go to stderr', async () => {
+  const after = await atlas(['scan', FIXTURE, '--name-filter', 'commits']);
+  const before = await atlas(['scan', '--name-filter', 'commits', FIXTURE]);
+  assert.deepEqual(before, after);
+  assert.equal(after.code, 0);
+  assert.equal(
+    after.stdout,
+    [
+      'fixture · 1 skill',
+      'commits — Write commit messages the way this repository does.',
+      `  ${pathToFileURL(FIXTURE).href}/.claude/skills/commits/SKILL.md`,
+      '  also in .junie/skills/commits/SKILL.md',
+    ].join('\n'),
+  );
+  assert.equal(after.stderr, fixture.stderr);
+});
+
+test('--name-filter on GitHub: the same filter, a pinned link', async () => {
+  assert.deepEqual(await atlas(['scan', 'github.com/JetBrains/example', '--name-filter', 'com*']), example);
+  const none = await atlas(['scan', 'github.com/JetBrains/example', '--name-filter', 'code-*']);
+  assert.equal(none.code, 0, none.stderr);
+  assert.equal(none.stdout, 'JetBrains/example · 0 skills');
+});
+
+test('--name-filter without a pattern, twice, an unknown option or an invalid glob → a clear message, exit code 1', async () => {
+  const cases: [string[], RegExp][] = [
+    [['--name-filter'], /^--name-filter needs a glob pattern\nUsage: skill-atlas scan /],
+    [['--name-filter', 'a*', '--name-filter=b*'], /^--name-filter is given twice\nUsage: skill-atlas scan /],
+    [['--name', 'a*'], /^Unknown option: --name\nUsage: skill-atlas scan /],
+    [['--name-filter', '[z-a]'], /^Not a valid glob pattern: \[z-a\]$/],
+  ];
+  for (const [args, message] of cases) {
+    const failed = await atlas(['scan', FIXTURE, ...args]);
+    assert.equal(failed.code, 1, args.join(' '));
+    assert.equal(failed.stdout, '');
+    assert.match(failed.stderr, message);
+  }
+});
+
+test('the CLI takes the --name-filter glob as it is given', () => {
+  const scanned = spawnSync(process.execPath, [CLI, 'scan', FIXTURE, '--name-filter', 'web-*'], { encoding: 'utf8' });
+  assert.equal(scanned.status, 0, scanned.stderr);
+  assert.match(scanned.stdout, /^fixture · 1 skill\nweb-build — /);
+});
