@@ -34,10 +34,10 @@ test('the web UI shows the skills recorded for the python organization', async (
   await expect(header).toContainText('2 skills in 2 repositories');
   await expect(header.locator('a')).toHaveAttribute('href', 'https://github.com/python');
 
-  // One section per repository, each with its skills.
+  // One section per repository, each with its skills, under its short name: the h2 has the organization.
   const sections = results.locator('section.repository');
   await expect(sections).toHaveCount(2);
-  await expect(results.locator('section.repository h3')).toContainText(['python/cpython', 'python/mypy']);
+  await expect(results.locator('section.repository h3')).toHaveText(['cpython · 1 skill', 'mypy · 1 skill']);
 
   const names = results.locator('section.repository a.name');
   await expect(names).toHaveText(['release', 'types']);
@@ -57,7 +57,7 @@ test('the filter narrows the python organization results to skills whose name st
 
   const sections = results.locator('section.repository');
   await expect(sections).toHaveCount(1);
-  await expect(sections.locator('h3')).toContainText('python/cpython');
+  await expect(sections.locator('h3')).toHaveText('cpython · 1 skill');
   await expect(results.locator('h2')).toContainText('1 skill in 1 repository');
 
   const names = results.locator('section.repository a.name');
