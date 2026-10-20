@@ -16,6 +16,8 @@ export type Context = {
    * Only the Node CLI has it.
    */
   serve?(port: number, host?: string): Promise<string>;
+  /** Stops a web view started with `serve` on this machine; resolves to a human-readable message. */
+  stop?(): Promise<string>;
 };
 
 const usage = `Usage: skill-atlas <command>
@@ -25,6 +27,7 @@ const usage = `Usage: skill-atlas <command>
     --name-filter <glob>          only the skills whose name matches, e.g. 'web-*'
   serve [--port <port>] [--host <host>]
                                   open the web view, on localhost:3000 by default
+  stop                            stop the web view started with 'serve' on this machine
   help                            show this help`;
 
 const scanUsage = 'Usage: skill-atlas scan <GitHub URL | directory> [--name-filter <glob>]';
@@ -35,6 +38,7 @@ export async function run(args: string[], context: Context): Promise<number> {
   try {
     if (command === 'scan') await scanCommand(rest, context);
     else if (command === 'serve') await serveCommand(rest, context);
+    else if (command === 'stop') await stopCommand(rest, context);
     else if (command === 'help') context.print(usage);
     else throw new AtlasError(`Unknown command: ${command}\n\n${usage}`);
     return 0;
@@ -116,6 +120,12 @@ async function serveCommand(args: string[], context: Context) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new AtlasError(`Not a port: ${options.get('--port')}\n\n${usage}`);
   if (!context.serve) throw new AtlasError('The web view runs from the command line: skill-atlas serve');
   context.print(`Skill Atlas web view: ${await context.serve(port, options.get('--host'))}`);
+}
+
+async function stopCommand(args: string[], context: Context) {
+  if (args.length > 0) throw new AtlasError('Usage: skill-atlas stop');
+  if (!context.stop) throw new AtlasError('The web view runs from the command line: skill-atlas stop');
+  context.print(await context.stop());
 }
 
 /** `<owner>/<repo> · N skills`, then each skill's name, first sentence and link. */

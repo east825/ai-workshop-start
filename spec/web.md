@@ -1,6 +1,8 @@
 # Web view
 `./skill-atlas serve [--port <port>] [--host <host>]`: **localhost:3000** by default.
 A *thin client* of the same core as the CLI.
+`./skill-atlas stop`: stops a `serve` running on this machine (SIGTERM via a PID file in the OS temp
+directory). No server running → a clear message, exit code 1.
 ## Access
 `GITHUB_TOKEN`, optional, as in the CLI: from the environment of `skill-atlas serve`, read when it starts.
 Every scan uses it, whoever asks for it; the page never sends nor receives it. The token may read private
