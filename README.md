@@ -14,9 +14,14 @@ build-tools-bump-gradle-api — Bumps the Gradle API version that Kotlin Gradle 
 ```
 
 `--name-filter '<glob>'` lists only the skills whose name matches a Unix glob, such as
-`--name-filter 'build-*'`. Set `GITHUB_TOKEN` for a higher GitHub rate limit. `npm test` runs the tests.
+`--name-filter 'build-*'`.
 
-- [spec/](spec/): what it does. [AGENTS.md](AGENTS.md): the definition of done.
+`./skill-atlas serve` opens the same in the browser, at http://localhost:3000 (`--port` for another one): paste
+`owner/repo` or a GitHub URL and the skills are listed below.
+
+Set `GITHUB_TOKEN` for a higher GitHub rate limit. `npm test` runs the tests.
+
+- [spec/](spec/): what it does, [spec/web.md](spec/web.md) for the web view. [AGENTS.md](AGENTS.md): the definition of done.
 - [fixture/](fixture/README.md): a small repository for the tests.
 - [tests/data/](tests/data/): real repositories, JetBrains/MPS, JetBrains/android and JetBrains/koog: what GitHub
   answered and what the scan printed, replayed by the tests; `npm run record` records them again.
