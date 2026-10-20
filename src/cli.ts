@@ -20,7 +20,10 @@ process.exitCode = await run(process.argv.slice(2), {
   serve: async (port, host) => {
     // On the network, the server answers by any name: whoever reaches it scans with the token.
     const local = host === undefined || isLocal(host);
-    const server = createWebServer({ open: (url) => openGitHub(url, { fetch, token }), anyHost: !local });
+    const server = createWebServer({
+      open: (url) => (parseGitHubUrl(url) ? openGitHub(url, { fetch, token }) : openGitHubOrganization(url, { fetch, token })),
+      anyHost: !local,
+    });
     const actual = await listen(server, port, host);
     return `http://${local ? 'localhost' : host!.includes(':') ? `[${host}]` : host}:${actual}`;
   },

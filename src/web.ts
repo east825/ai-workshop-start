@@ -1,13 +1,16 @@
-// The web view: a page to paste a GitHub repository into, and the scan behind it as JSON. The
-// same core as the CLI, GitHub only: a page must not read the server's own directories.
+// The web view: a page to paste a GitHub repository or organization into, and the scan behind it
+// as JSON. The same core as the CLI, GitHub only: a page must not read the server's own directories.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { AtlasError } from './core/errors.ts';
 import { firstSentence, skillLink } from './core/model.ts';
-import { scan, type Source } from './core/scan.ts';
+import { scan, scanOrganization, type Organization, type ScanResult, type Source } from './core/scan.ts';
 
 export type WebOptions = {
-  /** Opens a GitHub repository by its URL, `https://github.com/<owner>/<repo>`. */
-  open(url: string): Promise<Source>;
+  /**
+   * Opens a GitHub repository by its URL, `https://github.com/<owner>/<repo>`, or an organization
+   * of them by its own, `https://github.com/<organization>`.
+   */
+  open(url: string): Promise<Source | Organization>;
   /**
    * Answers whatever `Host` it is asked by. Off by default: on localhost, another name is a page
    * that pointed its own hostname at this server (DNS rebinding) to scan with the user's token.
@@ -16,10 +19,21 @@ export type WebOptions = {
   anyHost?: boolean;
 };
 
-/** What `/api/scan` answers: the CLI's output, as data. */
-export type WebScan = {
+type WebRepository = {
   repository: { id: string; url: string; commit: string };
   skills: { name: string; description: string; link: string; copies: string[] }[];
+};
+
+/** What `/api/scan` answers for a repository: the CLI's output, as data. */
+export type WebScan = WebRepository & { warnings: string[] };
+
+/**
+ * What `/api/scan` answers for an organization: its repositories with skills, sorted by name, each
+ * as for one repository; the warnings start with their repository.
+ */
+export type WebOrganizationScan = {
+  organization: { id: string; url: string };
+  repositories: WebRepository[];
   warnings: string[];
 };
 
@@ -27,14 +41,30 @@ const NAME = '[\\w.-]+';
 // Owners have no dots: `github.com/owner` is not the repository `owner` of `github.com`.
 const SHORT = new RegExp(`^([\\w-]+)/(${NAME}?)(?:\\.git)?$`);
 const FULL = new RegExp(`^(?:https?://)?(?:www\\.)?github\\.com/(${NAME})/(${NAME}?)(?:\\.git)?(?:[/?#].*)?$`, 'i');
+const OWNER = '[\\w-]+';
+const ORGANIZATION_SHORT = new RegExp(`^(${OWNER})$`);
+const ORGANIZATION_FULL = new RegExp(`^(?:https?://)?(?:www\\.)?github\\.com/(${OWNER})/?(?:[?#].*)?$`, 'i');
+// `github.com/orgs/<organization>/repositories`, and the organization's other pages: not a repository.
+const ORGANIZATION_PAGE = new RegExp(`^(?:https?://)?(?:www\\.)?github\\.com/orgs/(${OWNER})(?:[/?#].*)?$`, 'i');
 
 /**
  * `owner/repo`, or a repository's URL with or without the scheme; a page of the repository, such
  * as `…/tree/main/docs`, as copied from the address bar, is its repository.
  */
 export function parseRepository(input: string): { owner: string; repo: string } | undefined {
+  if (ORGANIZATION_PAGE.test(input.trim())) return undefined;
   const match = FULL.exec(input.trim()) ?? SHORT.exec(input.trim());
   return match ? { owner: match[1], repo: match[2] } : undefined;
+}
+
+/**
+ * An organization's name alone, `JetBrains`, or its URL with or without the scheme; one of its
+ * pages, such as `github.com/orgs/JetBrains/repositories`, is the organization.
+ */
+export function parseOrganization(input: string): { owner: string } | undefined {
+  const trimmed = input.trim();
+  const match = ORGANIZATION_PAGE.exec(trimmed) ?? ORGANIZATION_FULL.exec(trimmed) ?? ORGANIZATION_SHORT.exec(trimmed);
+  return match ? { owner: match[1] } : undefined;
 }
 
 export function createWebServer(options: WebOptions): Server {
@@ -74,12 +104,18 @@ async function handle(request: IncomingMessage, response: ServerResponse, option
   if (url.pathname !== '/api/scan') return send(response, 404, 'text/plain', 'Not found');
 
   const input = url.searchParams.get('repo') ?? '';
-  const name = parseRepository(input);
-  if (!name) {
-    return json(response, 400, { error: `Not a GitHub repository: ${input.trim() || '(empty)'}. Paste owner/repo or a github.com URL.` });
+  const repository = parseRepository(input);
+  const organization = repository ? undefined : parseOrganization(input);
+  if (!repository && !organization) {
+    return json(response, 400, {
+      error: `Not a GitHub repository or organization: ${input.trim() || '(empty)'}. Paste owner/repo, an organization or a github.com URL.`,
+    });
   }
   try {
-    json(response, 200, toWebScan(await scan(await options.open(`https://github.com/${name.owner}/${name.repo}`))));
+    const opened = await options.open(
+      repository ? `https://github.com/${repository.owner}/${repository.repo}` : `https://github.com/${organization!.owner}`,
+    );
+    json(response, 200, 'repositories' in opened ? toWebOrganizationScan(await scanOrganization(opened)) : toWebScan(await scan(opened)));
   } catch (error) {
     if (!(error instanceof AtlasError)) throw error;
     json(response, 400, { error: error.message });
@@ -95,7 +131,19 @@ function hostname(host: string | undefined): string {
   }
 }
 
-function toWebScan({ repository, skills, warnings }: Awaited<ReturnType<typeof scan>>): WebScan {
+function toWebScan(result: ScanResult): WebScan {
+  return { ...toWebRepository(result), warnings: result.warnings };
+}
+
+function toWebOrganizationScan(result: Awaited<ReturnType<typeof scanOrganization>>): WebOrganizationScan {
+  return {
+    organization: { id: result.organization, url: `https://github.com/${result.organization}` },
+    repositories: result.repositories.map(toWebRepository),
+    warnings: result.warnings,
+  };
+}
+
+function toWebRepository({ repository, skills }: ScanResult): WebRepository {
   return {
     repository: { id: repository.id, url: repository.url, commit: repository.commit },
     skills: skills.map((skill) => ({
@@ -104,7 +152,6 @@ function toWebScan({ repository, skills, warnings }: Awaited<ReturnType<typeof s
       link: skillLink(repository, skill),
       copies: skill.copies,
     })),
-    warnings,
   };
 }
 
@@ -137,15 +184,16 @@ const PAGE = `<!doctype html>
   .name { font-weight: 600; }
   .description { margin: .2rem 0 0; }
   .copies, .meta { color: #888; font-size: .9em; }
+  .repository { margin-top: 1.5rem; }
   .error { color: #d33; }
   .warnings { color: #b80; font-size: .9em; }
 </style>
 </head>
 <body>
 <h1>Skill Atlas</h1>
-<p>Every agent skill in a GitHub repository.</p>
+<p>Every agent skill in a GitHub repository, or in every repository of an organization.</p>
 <form id="scan">
-  <input id="repo" name="repo" placeholder="owner/repo or https://github.com/owner/repo" autocomplete="off" required autofocus>
+  <input id="repo" name="repo" placeholder="owner/repo, an organization or https://github.com/owner/repo" autocomplete="off" required autofocus>
   <button type="submit">Scan</button>
 </form>
 <section id="results" aria-live="polite"></section>
@@ -162,16 +210,21 @@ function element(tag, className, text) {
   return node;
 }
 
-function render(result) {
-  results.replaceChildren();
-  const count = result.skills.length;
-  const title = element('h2');
-  const repository = element('a', '', result.repository.id);
-  repository.href = result.repository.url;
-  title.append(repository, ' · ' + count + (count === 1 ? ' skill' : ' skills'));
-  results.append(title);
+function plural(count, one, many) {
+  return count + ' ' + (count === 1 ? one : many);
+}
+
+function title(tag, text, url, rest) {
+  const node = element(tag);
+  const link = element('a', '', text);
+  link.href = url;
+  node.append(link, ' · ' + rest);
+  return node;
+}
+
+function skillList(skills) {
   const list = element('ul');
-  for (const skill of result.skills) {
+  for (const skill of skills) {
     const item = element('li');
     const name = element('a', 'name', skill.name);
     name.href = skill.link;
@@ -182,7 +235,27 @@ function render(result) {
     if (skill.copies.length) item.append(element('div', 'copies', 'also in ' + skill.copies.join(', ')));
     list.append(item);
   }
-  results.append(list);
+  return list;
+}
+
+function render(result) {
+  results.replaceChildren();
+  if (result.organization) {
+    // As the CLI prints an organization: its repositories with skills, each as one repository.
+    const skills = result.repositories.reduce((count, { skills }) => count + skills.length, 0);
+    const count = result.repositories.length
+      ? plural(skills, 'skill', 'skills') + ' in ' + plural(result.repositories.length, 'repository', 'repositories')
+      : '0 skills';
+    results.append(title('h2', result.organization.id, result.organization.url, count));
+    for (const { repository, skills } of result.repositories) {
+      const section = element('section', 'repository');
+      section.append(title('h3', repository.id, repository.url, plural(skills.length, 'skill', 'skills')), skillList(skills));
+      results.append(section);
+    }
+  } else {
+    results.append(title('h2', result.repository.id, result.repository.url, plural(result.skills.length, 'skill', 'skills')));
+    results.append(skillList(result.skills));
+  }
   if (result.warnings.length) {
     const warnings = element('ul', 'warnings');
     for (const warning of result.warnings) warnings.append(element('li', '', 'warning: ' + warning));

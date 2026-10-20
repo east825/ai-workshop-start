@@ -18,7 +18,8 @@ forks, grouped by repository. `--name-filter '<glob>'` lists only the skills who
 `--name-filter 'build-*'`.
 
 `./skill-atlas serve` opens the same in the browser, at http://localhost:3000 (`--port` for another one, `--host` to put it on the network): paste
-`owner/repo` or a GitHub URL and the skills are listed below.
+`owner/repo`, an organization such as `JetBrains`, or a GitHub URL and the skills are listed below, grouped by
+repository for an organization, as in the CLI.
 
 Set `GITHUB_TOKEN` for a higher GitHub rate limit: an organization soon runs out of it without one. `npm test` runs
 the tests.

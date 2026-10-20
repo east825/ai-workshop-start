@@ -9,9 +9,9 @@ import { createInterface } from 'node:readline';
 import { JSDOM } from 'jsdom';
 import { after, test } from 'node:test';
 import { run } from '../src/commands.ts';
-import { openGitHub } from '../src/core/github.ts';
+import { openGitHub, openGitHubOrganization, parseGitHubUrl, type GitHubOptions } from '../src/core/github.ts';
 import { replay, type Recording } from '../src/core/replay.ts';
-import { createWebServer, listen, parseRepository, type WebScan } from '../src/web.ts';
+import { createWebServer, listen, parseOrganization, parseRepository, type WebOrganizationScan, type WebScan } from '../src/web.ts';
 import { CLI, EXAMPLE_COMMIT, github } from './helpers.ts';
 
 const COMMIT = '0123456789abcdef0123456789abcdef01234567';
@@ -60,14 +60,63 @@ const MARKUP: Recording = {
   },
 };
 
+const API = 'https://api.github.com';
+const ORG_COMMIT = 'fedcba9876543210fedcba9876543210fedcba98';
+const skillFile = (name: string, description: string) => `---\nname: ${name}\ndescription: ${description}\n---\n`;
+const raw = (id: string, path: string) => `https://raw.githubusercontent.com/${id}/${ORG_COMMIT}/${path}`;
+
+/** The repository and its default branch's commit, as GitHub answers them. */
+function repository(id: string): Recording {
+  return {
+    [`${API}/repos/${id}`]: { status: 200, body: { full_name: id, default_branch: 'main' } },
+    [`${API}/repos/${id}/commits/main`]: { status: 200, body: { sha: ORG_COMMIT } },
+  };
+}
+
+/**
+ * The Acme organization, through code search: zeta and alpha have skills (alpha's in two agents'
+ * folders, one malformed), tooling has only test data's and is never opened.
+ */
+const ACME: Recording = {
+  [`${API}/orgs/acme`]: { status: 200, body: { login: 'Acme' } },
+  [`${API}/search/code?q=filename:SKILL.md+org:Acme&per_page=100&page=1`]: {
+    status: 200,
+    body: {
+      total_count: 5,
+      items: [
+        { path: '.claude/skills/deploy/SKILL.md', repository: { full_name: 'Acme/zeta' } },
+        { path: '.claude/skills/commits/SKILL.md', repository: { full_name: 'Acme/alpha' } },
+        { path: '.junie/skills/commits/SKILL.md', repository: { full_name: 'Acme/alpha' } },
+        { path: '.agents/skills/review/SKILL.md', repository: { full_name: 'Acme/alpha' } },
+        { path: 'testData/.claude/skills/sample/SKILL.md', repository: { full_name: 'Acme/tooling' } },
+      ],
+    },
+  },
+  ...repository('Acme/zeta'),
+  ...repository('Acme/alpha'),
+  [raw('Acme/zeta', '.claude/skills/deploy/SKILL.md')]: { status: 200, body: skillFile('deploy', 'Deploy the service. Use before a release.') },
+  [raw('Acme/alpha', '.claude/skills/commits/SKILL.md')]: { status: 200, body: skillFile('commits', 'Write commit messages. Use for every commit.') },
+  [raw('Acme/alpha', '.junie/skills/commits/SKILL.md')]: { status: 200, body: skillFile('commits', 'Write commit messages. Use for every commit.') },
+  [raw('Acme/alpha', '.agents/skills/review/SKILL.md')]: { status: 200, body: '---\nname: [review\n---\n' },
+  // Bare: no skills at all.
+  [`${API}/orgs/Bare`]: { status: 200, body: { login: 'Bare' } },
+  [`${API}/search/code?q=filename:SKILL.md+org:Bare&per_page=100&page=1`]: { status: 200, body: { total_count: 0, items: [] } },
+  [`${API}/orgs/no-such-organization`]: { status: 404, body: { message: 'Not Found' } },
+};
+
+/** As the CLI opens what it is given: a repository, or an organization of them. */
+function openAny(url: string, options: GitHubOptions) {
+  return parseGitHubUrl(url) ? openGitHub(url, options) : openGitHubOrganization(url, options);
+}
+
 /** The URLs the web view asked to open: a local directory must never be among them. */
 const opened: string[] = [];
-const recorded = replay({ ...SKILLS, ...MARKUP }, github);
+const recorded = replay({ ...SKILLS, ...MARKUP, ...ACME }, github);
 const server = createWebServer({
   open: (url) => {
     opened.push(url);
     // With a token, through code search, as the recordings answer it.
-    return openGitHub(url, { fetch: recorded, token: 'test' });
+    return openAny(url, { fetch: recorded, token: 'test' });
   },
 });
 const base = `http://localhost:${await listen(server, 0, '127.0.0.1')}`;
@@ -122,12 +171,31 @@ test('the input: owner/repo, a repository URL in any form, or a page of the repo
   }
 });
 
+test('the input: an organization, by its name alone, its URL in any form, or a page of it', () => {
+  for (const input of [
+    'JetBrains',
+    '  JetBrains  ',
+    'https://github.com/JetBrains',
+    'http://www.github.com/JetBrains/',
+    'github.com/JetBrains',
+    'https://github.com/JetBrains?tab=repositories',
+    'https://github.com/orgs/JetBrains/repositories',
+    'https://github.com/orgs/JetBrains/repositories?type=source',
+  ]) {
+    assert.deepEqual(parseOrganization(input), { owner: 'JetBrains' }, input);
+    assert.equal(parseRepository(input), undefined, input);
+  }
+  for (const input of ['', 'JetBrains/example', 'github.com', 'https://gitlab.com/JetBrains', '/etc', './fixture', 'Jet.Brains', 'Jet Brains']) {
+    assert.equal(parseOrganization(input), undefined, input);
+  }
+});
+
 test('the page: one field for the repository and a pane below it for the skills', async () => {
   const response = await fetch(`${base}/`);
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type') ?? '', /^text\/html/);
   const page = await response.text();
-  assert.match(page, /<form id="scan">\s*<input id="repo"[^>]*placeholder="owner\/repo or https:\/\/github\.com\/owner\/repo"/);
+  assert.match(page, /<form id="scan">\s*<input id="repo"[^>]*placeholder="owner\/repo, an organization or https:\/\/github\.com\/owner\/repo"/);
   assert.match(page, /<\/form>\s*<section id="results"/);
   // The scan is asked for relative to the page, so it works behind a proxy's path too.
   assert.match(page, /fetch\('api\/scan\?repo=' \+ encodeURIComponent\(repo\)\)/);
@@ -159,14 +227,94 @@ test('/api/scan: sorted by name, first sentences, copies and warnings', async ()
   assert.match(scanned.body.warnings[0], /^\.agents\/skills\/broken\/SKILL\.md: malformed front matter: .*; using the directory name$/);
 });
 
-test('/api/scan: not a GitHub repository → a clear message, and nothing is opened', async () => {
+test('/api/scan: not a GitHub repository nor an organization → a clear message, and nothing is opened', async () => {
   opened.length = 0;
-  for (const input of ['', './fixture', '/etc', 'https://gitlab.com/JetBrains/example']) {
+  for (const input of ['', './fixture', '/etc', 'https://gitlab.com/JetBrains/example', 'a/b/c']) {
     const scanned = await api(input);
     assert.equal(scanned.status, 400, input);
-    assert.match(scanned.body.error!, /^Not a GitHub repository: .*\. Paste owner\/repo or a github\.com URL\.$/);
+    assert.match(scanned.body.error!, /^Not a GitHub repository or organization: .*\. Paste owner\/repo, an organization or a github\.com URL\.$/);
   }
   assert.deepEqual(opened, []);
+});
+
+const ACME_SCAN: WebOrganizationScan = {
+  organization: { id: 'Acme', url: 'https://github.com/Acme' },
+  repositories: [
+    {
+      repository: { id: 'Acme/alpha', url: 'https://github.com/Acme/alpha', commit: ORG_COMMIT },
+      skills: [
+        {
+          name: 'commits',
+          description: 'Write commit messages.',
+          link: `https://github.com/Acme/alpha/blob/${ORG_COMMIT}/.claude/skills/commits/SKILL.md`,
+          copies: ['.junie/skills/commits/SKILL.md'],
+        },
+        { name: 'review', description: '', link: `https://github.com/Acme/alpha/blob/${ORG_COMMIT}/.agents/skills/review/SKILL.md`, copies: [] },
+      ],
+    },
+    {
+      repository: { id: 'Acme/zeta', url: 'https://github.com/Acme/zeta', commit: ORG_COMMIT },
+      skills: [
+        { name: 'deploy', description: 'Deploy the service.', link: `https://github.com/Acme/zeta/blob/${ORG_COMMIT}/.claude/skills/deploy/SKILL.md`, copies: [] },
+      ],
+    },
+  ],
+  warnings: [
+    'Acme/alpha: .agents/skills/review/SKILL.md: malformed front matter: Flow sequence in block collection must be sufficiently indented and end with a ] at line 2, column 14; using the directory name',
+  ],
+};
+
+test('/api/scan: an organization → each of its repositories with skills, sorted by name, as the CLI prints them', async () => {
+  for (const input of ['acme', 'https://github.com/acme', 'github.com/orgs/acme/repositories']) {
+    opened.length = 0;
+    const scanned = await api(input);
+    assert.equal(scanned.status, 200, (scanned.body as { error?: string }).error);
+    assert.deepEqual(scanned.body, ACME_SCAN, input);
+    assert.deepEqual(opened, ['https://github.com/acme'], input);
+  }
+  // Without any skills: the organization, and no repositories.
+  const bare = await api('Bare');
+  assert.equal(bare.status, 200);
+  assert.deepEqual(bare.body, { organization: { id: 'Bare', url: 'https://github.com/Bare' }, repositories: [], warnings: [] });
+  // A user account, or no account at all, is not an organization.
+  const notFound = await api('no-such-organization');
+  assert.equal(notFound.status, 400);
+  assert.equal(notFound.body.error, 'Organization not found: https://github.com/no-such-organization');
+});
+
+test('/api/scan: an organization without a token, through every repository\'s tree, forks left out', async () => {
+  const tree = (id: string, paths: string[]): Recording => ({
+    [`${API}/repos/${id}/git/trees/${ORG_COMMIT}?recursive=1`]: {
+      status: 200,
+      body: { truncated: false, tree: paths.map((path) => ({ path, mode: '100644', type: 'blob', sha: path })) },
+    },
+  });
+  const recording: Recording = {
+    ...ACME,
+    // Not answered in the recording: opening the fork fails the test.
+    [`${API}/orgs/Acme/repos?per_page=100&page=1`]: {
+      status: 200,
+      body: [
+        { full_name: 'Acme/zeta', fork: false },
+        { full_name: 'Acme/fork', fork: true },
+        { full_name: 'Acme/alpha', fork: false },
+        { full_name: 'Acme/docs', fork: false },
+      ],
+    },
+    ...tree('Acme/zeta', ['README.md', '.claude/skills/deploy/SKILL.md']),
+    ...tree('Acme/alpha', ['.claude/skills/commits/SKILL.md', '.junie/skills/commits/SKILL.md', '.agents/skills/review/SKILL.md']),
+    ...repository('Acme/docs'),
+    ...tree('Acme/docs', ['README.md', 'docs/SKILL.md']),
+  };
+  const untokened = createWebServer({ open: (url) => openAny(url, { fetch: replay(recording) }) });
+  const untokenedBase = `http://localhost:${await listen(untokened, 0, '127.0.0.1')}`;
+  try {
+    const response = await fetch(`${untokenedBase}/api/scan?repo=acme`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), ACME_SCAN);
+  } finally {
+    untokened.close();
+  }
 });
 
 test('/api/scan: a failed scan → the CLI\'s message', async () => {
@@ -270,9 +418,50 @@ test('the pane: ?repo= in the address scans at once', async () => {
   assert.equal(results.querySelector('.warnings'), null);
 });
 
+test('the pane: an organization, its repositories with skills, each as one repository, warnings below', async () => {
+  const window = await page(`${base}/`);
+  window.document.querySelector<HTMLInputElement>('#repo')!.value = ' acme ';
+  window.document.querySelector<HTMLFormElement>('#scan')!.requestSubmit();
+  const results = await pane(window);
+
+  const title = results.querySelector('h2')!;
+  assert.equal(title.textContent, 'Acme · 3 skills in 2 repositories');
+  assert.equal(title.querySelector('a')!.href, 'https://github.com/Acme');
+  const repositories = [...results.querySelectorAll<HTMLElement>(':scope > section.repository')];
+  assert.deepEqual(
+    repositories.map((section) => ({ title: section.querySelector('h3')!.textContent, link: section.querySelector<HTMLAnchorElement>('h3 a')!.href })),
+    [
+      { title: 'Acme/alpha · 2 skills', link: 'https://github.com/Acme/alpha' },
+      { title: 'Acme/zeta · 1 skill', link: 'https://github.com/Acme/zeta' },
+    ],
+  );
+  assert.deepEqual(listed(repositories[0]), [
+    {
+      name: 'commits',
+      link: `https://github.com/Acme/alpha/blob/${ORG_COMMIT}/.claude/skills/commits/SKILL.md`,
+      description: 'Write commit messages.',
+      copies: 'also in .junie/skills/commits/SKILL.md',
+    },
+    { name: 'review', link: `https://github.com/Acme/alpha/blob/${ORG_COMMIT}/.agents/skills/review/SKILL.md`, description: undefined, copies: undefined },
+  ]);
+  assert.deepEqual(listed(repositories[1]), [
+    { name: 'deploy', link: `https://github.com/Acme/zeta/blob/${ORG_COMMIT}/.claude/skills/deploy/SKILL.md`, description: 'Deploy the service.', copies: undefined },
+  ]);
+  const warnings = [...results.querySelectorAll(':scope > ul.warnings > li')].map((item) => item.textContent);
+  assert.deepEqual(warnings, [`warning: ${ACME_SCAN.warnings[0]}`]);
+  assert.equal(results.lastElementChild!.className, 'warnings');
+  assert.equal(new URL(window.location.href).searchParams.get('repo'), 'acme');
+
+  // With no skills at all: the organization, 0 skills.
+  const bare = await pane(await page(`${base}/?repo=Bare`));
+  assert.equal(bare.querySelector('h2')!.textContent, 'Bare · 0 skills');
+  assert.equal(bare.querySelector('section.repository, li'), null);
+});
+
 test('the pane: a failure → the message, in the pane', async () => {
   for (const [repo, message] of [
-    ['./fixture', 'Not a GitHub repository: ./fixture. Paste owner/repo or a github.com URL.'],
+    ['./fixture', 'Not a GitHub repository or organization: ./fixture. Paste owner/repo, an organization or a github.com URL.'],
+    ['no-such-organization', 'Organization not found: https://github.com/no-such-organization'],
     ['JetBrains/not-answered', 'Cannot reach GitHub: not recorded: https://api.github.com/repos/JetBrains/not-answered'],
     ['JetBrains/limited', 'GitHub rate limit reached; try again in a minute'],
   ]) {
