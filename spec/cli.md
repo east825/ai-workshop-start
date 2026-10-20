@@ -15,6 +15,8 @@ build-tools-bump-gradle-api — Bumps the Gradle API…
 whose **name** matches are listed, and counted in the header; without it, every skill
 - A *Unix glob*, as fnmatch: `*` any text, `?` one character, `[abc]`, `[a-z]`, `[!abc]` or `[^abc]`; `\` escapes
 - The *whole* name must match, case-sensitively: `web-*` matches `web-build`, not `my-web-build` or `Web-build`
+- Quoted as in a shell, `--name-filter 'web-*'` or `--name-filter='web-*'`; the browser terminal drops one
+  pair of matching quotes (`'…'` or `"…"`) around a word, or around the value after `=`, the same way
 - Copies stay with their skill: a skill and its `also in` share one name
 - No match → `<repo> · 0 skills`, exit code 0; warnings are printed as without the filter
 - No pattern after `--name-filter`, the option twice, an unknown option or an invalid glob (`[z-a]`) →
