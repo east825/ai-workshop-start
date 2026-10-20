@@ -1,6 +1,12 @@
 # Web view
-`./skill-atlas serve [--port <port>]`: port **3000** by default, on every interface.
+`./skill-atlas serve [--port <port>] [--host <host>]`: **localhost:3000** by default.
 A *thin client* of the same core as the CLI; `GITHUB_TOKEN` as in the CLI.
+## Access
+The scans use the user's `GITHUB_TOKEN`, which may read private repositories:
+- On localhost, only requests for `localhost`, `127.0.0.1` or `[::1]` are answered; any other `Host` → 403
+  (a page that points its own name at localhost, DNS rebinding, does not get the token's answers)
+- `--host <host>` other than localhost puts the server on the network *on purpose*: it answers by any name,
+  and whoever reaches it scans with the token
 ## Input
 A **GitHub repository**, pasted into one field:
 - `owner/repo`

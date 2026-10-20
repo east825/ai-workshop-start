@@ -11,15 +11,19 @@ export type Context = {
   print(text: string): void;
   /** Errors and warnings. */
   error(text: string): void;
-  /** Starts the web view on the port; resolves to its address. Only the Node CLI has it. */
-  serve?(port: number): Promise<string>;
+  /**
+   * Starts the web view on the port, on localhost unless a host is given; resolves to its address.
+   * Only the Node CLI has it.
+   */
+  serve?(port: number, host?: string): Promise<string>;
 };
 
 const usage = `Usage: skill-atlas <command>
 
   scan <GitHub URL | directory>   find every SKILL.md in a repository and print it
     --name-filter <glob>          only the skills whose name matches, e.g. 'web-*'
-  serve [--port <port>]           open the web view, on port 3000 by default
+  serve [--port <port>] [--host <host>]
+                                  open the web view, on localhost:3000 by default
   help                            show this help`;
 
 const scanUsage = 'Usage: skill-atlas scan <GitHub URL | directory> [--name-filter <glob>]';
@@ -72,12 +76,17 @@ function scanArguments(args: string[]): { input: string; nameFilter?: string } {
 }
 
 async function serveCommand(args: string[], context: Context) {
-  const usage = 'Usage: skill-atlas serve [--port <port>]';
-  if (args.length !== 0 && (args.length !== 2 || args[0] !== '--port')) throw new AtlasError(usage);
-  const port = args.length ? Number(args[1]) : 3000;
-  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new AtlasError(`Not a port: ${args[1]}\n\n${usage}`);
+  const usage = 'Usage: skill-atlas serve [--port <port>] [--host <host>]';
+  const options = new Map<string, string>();
+  for (let index = 0; index < args.length; index += 2) {
+    const [flag, value] = [args[index], args[index + 1]];
+    if ((flag !== '--port' && flag !== '--host') || value === undefined || options.has(flag)) throw new AtlasError(usage);
+    options.set(flag, value);
+  }
+  const port = Number(options.get('--port') ?? 3000);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new AtlasError(`Not a port: ${options.get('--port')}\n\n${usage}`);
   if (!context.serve) throw new AtlasError('The web view runs from the command line: skill-atlas serve');
-  context.print(`Skill Atlas web view: ${await context.serve(port)}`);
+  context.print(`Skill Atlas web view: ${await context.serve(port, options.get('--host'))}`);
 }
 
 /** `<owner>/<repo> · N skills`, then each skill's name, first sentence and link. */

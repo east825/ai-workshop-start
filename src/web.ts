@@ -8,6 +8,12 @@ import { scan, type Source } from './core/scan.ts';
 export type WebOptions = {
   /** Opens a GitHub repository by its URL, `https://github.com/<owner>/<repo>`. */
   open(url: string): Promise<Source>;
+  /**
+   * Answers whatever `Host` it is asked by. Off by default: on localhost, another name is a page
+   * that pointed its own hostname at this server (DNS rebinding) to scan with the user's token.
+   * Only for a server put on the network on purpose, `--host`.
+   */
+  anyHost?: boolean;
 };
 
 /** What `/api/scan` answers: the CLI's output, as data. */
@@ -40,11 +46,16 @@ export function createWebServer(options: WebOptions): Server {
   });
 }
 
-/** Starts listening on every interface; resolves to the port, the actual one for port 0. */
-export function listen(server: Server, port: number, host = '0.0.0.0'): Promise<number> {
+/** localhost, by name or address. */
+export function isLocal(hostname: string): boolean {
+  return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname.toLowerCase());
+}
+
+/** Starts listening, on localhost only by default; resolves to the port, the actual one for port 0. */
+export function listen(server: Server, port: number, host = '127.0.0.1'): Promise<number> {
   return new Promise((resolve, reject) => {
     server.once('error', (error: NodeJS.ErrnoException) =>
-      reject(new AtlasError(error.code === 'EADDRINUSE' ? `Port ${port} is already in use` : `Cannot listen on port ${port}: ${error.message}`)),
+      reject(new AtlasError(error.code === 'EADDRINUSE' ? `Port ${port} is already in use` : `Cannot listen on ${host}:${port}: ${error.message}`)),
     );
     server.listen(port, host, () => {
       const address = server.address();
@@ -55,6 +66,9 @@ export function listen(server: Server, port: number, host = '0.0.0.0'): Promise<
 
 async function handle(request: IncomingMessage, response: ServerResponse, options: WebOptions) {
   const url = new URL(request.url ?? '/', 'http://localhost');
+  if (!options.anyHost && !isLocal(hostname(request.headers.host))) {
+    return send(response, 403, 'text/plain', 'Forbidden: the web view answers on localhost only');
+  }
   if (request.method !== 'GET' && request.method !== 'HEAD') return send(response, 405, 'text/plain', 'Method not allowed');
   if (url.pathname === '/') return send(response, 200, 'text/html; charset=utf-8', PAGE);
   if (url.pathname !== '/api/scan') return send(response, 404, 'text/plain', 'Not found');
@@ -69,6 +83,15 @@ async function handle(request: IncomingMessage, response: ServerResponse, option
   } catch (error) {
     if (!(error instanceof AtlasError)) throw error;
     json(response, 400, { error: error.message });
+  }
+}
+
+/** The name in a `Host` header, without the port; empty when there is none or it is not one. */
+function hostname(host: string | undefined): string {
+  try {
+    return host ? new URL(`http://${host}`).hostname : '';
+  } catch {
+    return '';
   }
 }
 

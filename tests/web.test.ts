@@ -2,6 +2,7 @@
 // GitHub answering from recordings (tests/helpers.ts and below), and `skill-atlas serve` itself.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { get } from 'node:http';
 import { once } from 'node:events';
 import { createInterface } from 'node:readline';
 import { after, test } from 'node:test';
@@ -50,6 +51,16 @@ const server = createWebServer({
 });
 const base = `http://localhost:${await listen(server, 0, '127.0.0.1')}`;
 after(() => server.close());
+
+/** A GET with the `Host` header a browser would send for that name: fetch cannot set it. */
+function getAs(url: string, host: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    get(url, { headers: { Host: host } }, (response) => {
+      response.resume();
+      resolve(response.statusCode!);
+    }).on('error', reject);
+  });
+}
 
 async function api(repo: string) {
   const response = await fetch(`${base}/api/scan?repo=${encodeURIComponent(repo)}`);
@@ -163,32 +174,55 @@ test('anything else → 404; anything but GET → 405', async () => {
   assert.equal((await fetch(`${base}/api/scan?repo=JetBrains/example`, { method: 'POST' })).status, 405);
 });
 
-test('serve: --port, a clear message for a wrong one or one in use', async () => {
+test('access: on localhost, only for localhost; any name with --host', async (t) => {
+  const port = new URL(base).port;
+  for (const host of [`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`, 'LOCALHOST']) {
+    assert.equal(await getAs(`${base}/api/scan?repo=JetBrains/example`, host), 200, host);
+  }
+  // DNS rebinding: a page whose own name now points at 127.0.0.1.
+  for (const host of [`attacker.example:${port}`, 'localhost.attacker.example', '192.0.2.1']) {
+    assert.equal(await getAs(`${base}/`, host), 403, host);
+    assert.equal(await getAs(`${base}/api/scan?repo=JetBrains/example`, host), 403, host);
+  }
+
+  const network = createWebServer({ open: (url) => openGitHub(url, { fetch: recorded, token: 'test' }), anyHost: true });
+  const networkBase = `http://localhost:${await listen(network, 0, '127.0.0.1')}`;
+  t.after(() => network.close());
+  assert.equal(await getAs(`${networkBase}/api/scan?repo=JetBrains/example`, 'skill-atlas.example'), 200);
+});
+
+test('serve: --port and --host, a clear message for a wrong one or a port in use', async () => {
   const serve = async (args: string[], withServe = true) => {
     const stdout: string[] = [];
     const stderr: string[] = [];
-    const ports: number[] = [];
+    const listened: [number, string | undefined][] = [];
     const code = await run(['serve', ...args], {
       open: () => Promise.reject(new Error('not used')),
       print: (text) => stdout.push(text),
       error: (text) => stderr.push(text),
-      serve: withServe ? async (port) => (ports.push(port), `http://localhost:${port}`) : undefined,
+      serve: withServe ? async (port, host) => (listened.push([port, host]), `http://${host ?? 'localhost'}:${port}`) : undefined,
     });
-    return { code, stdout: stdout.join('\n'), stderr: stderr.join('\n'), ports };
+    return { code, stdout: stdout.join('\n'), stderr: stderr.join('\n'), listened };
   };
-  assert.deepEqual(await serve([]), { code: 0, stdout: 'Skill Atlas web view: http://localhost:3000', stderr: '', ports: [3000] });
-  assert.deepEqual((await serve(['--port', '8080'])).ports, [8080]);
-  for (const args of [['--port'], ['--port', 'x'], ['--port', '70000'], ['8080']]) {
+  assert.deepEqual(await serve([]), {
+    code: 0,
+    stdout: 'Skill Atlas web view: http://localhost:3000',
+    stderr: '',
+    listened: [[3000, undefined]],
+  });
+  assert.deepEqual((await serve(['--port', '8080'])).listened, [[8080, undefined]]);
+  assert.deepEqual((await serve(['--host', '0.0.0.0', '--port', '8080'])).listened, [[8080, '0.0.0.0']]);
+  for (const args of [['--port'], ['--port', 'x'], ['--port', '70000'], ['8080'], ['--host'], ['--port', '1', '--port', '2'], ['--other', 'x']]) {
     const wrong = await serve(args);
     assert.equal(wrong.code, 1, args.join(' '));
-    assert.match(wrong.stderr, /Usage: skill-atlas serve \[--port <port>\]$/);
+    assert.match(wrong.stderr, /Usage: skill-atlas serve \[--port <port>\] \[--host <host>\]$/);
   }
   // The browser terminal has no server to start.
   assert.deepEqual(await serve([], false), {
     code: 1,
     stdout: '',
     stderr: 'The web view runs from the command line: skill-atlas serve',
-    ports: [],
+    listened: [],
   });
 
   const port = Number(new URL(base).port);
@@ -197,7 +231,7 @@ test('serve: --port, a clear message for a wrong one or one in use', async () =>
   });
 });
 
-test('the CLI: skill-atlas serve prints its address and answers there', async (t) => {
+test('the CLI: skill-atlas serve prints its address and answers there, for localhost only', async (t) => {
   const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', CLI, 'serve', '--port', '0'], {
     stdio: ['ignore', 'pipe', 'inherit'],
   });
@@ -211,4 +245,5 @@ test('the CLI: skill-atlas serve prints its address and answers there', async (t
   // Rejected before any request to GitHub: the test never reaches the network.
   const local = await fetch(`${address}/api/scan?repo=${encodeURIComponent('./fixture')}`);
   assert.equal(local.status, 400);
+  assert.equal(await getAs(`${address}/`, 'attacker.example'), 403);
 });

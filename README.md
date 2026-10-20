@@ -16,7 +16,7 @@ build-tools-bump-gradle-api — Bumps the Gradle API version that Kotlin Gradle 
 `--name-filter '<glob>'` lists only the skills whose name matches a Unix glob, such as
 `--name-filter 'build-*'`.
 
-`./skill-atlas serve` opens the same in the browser, at http://localhost:3000 (`--port` for another one): paste
+`./skill-atlas serve` opens the same in the browser, at http://localhost:3000 (`--port` for another one, `--host` to put it on the network): paste
 `owner/repo` or a GitHub URL and the skills are listed below.
 
 Set `GITHUB_TOKEN` for a higher GitHub rate limit. `npm test` runs the tests.
