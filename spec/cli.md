@@ -1,7 +1,7 @@
 # Command line
 `./skill-atlas scan <GitHub URL | directory> [--name-filter <glob>]`; the URL of a repository, or of an organization: `https://github.com/JetBrains`
 Prints the result **at once**; *nothing is stored*.
-`GITHUB_TOKEN`, optional: a higher GitHub rate limit.
+`GITHUB_TOKEN`, optional: a higher GitHub rate limit, and the private repositories the token can read.
 ## Output
 ```
 JetBrains/kotlin · 6 skills

@@ -541,3 +541,29 @@ test('organization: a rate limit stops the scan with a message that asks for GIT
   assert.equal(limited.stdout, '');
   assert.equal(limited.stderr, 'GitHub rate limit reached; set GITHUB_TOKEN');
 });
+
+test('organization, code search: a private repository\'s skills are read with the token', async () => {
+  const items = [{ path: '.claude/skills/deploy/SKILL.md', repository: { full_name: 'Acme/zeta' } }];
+  const recorded = replay({
+    ...ACME,
+    [`${API}/search/code?q=filename:SKILL.md+org:Acme&per_page=100&page=1`]: { status: 200, body: { total_count: 1, items } },
+  });
+  // As raw.githubusercontent.com answers for a private repository: 404 without the token.
+  const github = {
+    token: 'test',
+    fetch: (url: string, init?: { headers?: Record<string, string> }) =>
+      url.startsWith('https://raw.githubusercontent.com/') && init?.headers?.Authorization !== 'Bearer test'
+        ? Promise.resolve(new Response('404: Not Found', { status: 404 }))
+        : recorded(url, init),
+  };
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const code = await run(['scan', 'https://github.com/acme'], {
+    open: (input) => openGitHubOrganization(input, github),
+    print: (text) => stdout.push(text),
+    error: (text) => stderr.push(text),
+  });
+  assert.equal(code, 0, stderr.join('\n'));
+  assert.equal(stderr.join('\n'), '');
+  assert.match(stdout.join('\n'), /^Acme · 1 skill in 1 repository\n\nAcme\/zeta · 1 skill\ndeploy — Deploy the service\./);
+});

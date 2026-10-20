@@ -152,8 +152,9 @@ function files(tree: Tree): string[] {
 type Client = ReturnType<typeof client>;
 
 function client({ fetch, token }: GitHubOptions) {
-  const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };
-  if (token) headers.Authorization = `Bearer ${token}`;
+  // The token goes with the files too: a private repository's answers 404 without it.
+  const authorization: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+  const headers: Record<string, string> = { Accept: 'application/vnd.github+json', ...authorization };
   const answers = new Map<string, Promise<unknown>>(); // the root tree is asked for once per skill root
 
   async function get(url: string, init?: { headers: Record<string, string> }): Promise<Response> {
@@ -186,7 +187,7 @@ function client({ fetch, token }: GitHubOptions) {
     },
     /** A file's bytes at the scanned commit, or undefined if it is not there. */
     async raw(url: string): Promise<Uint8Array | undefined> {
-      const response = await get(url);
+      const response = await get(url, { headers: authorization });
       if (response.status === 404) return undefined;
       if (!response.ok) throw new AtlasError(`GitHub answered ${response.status} for ${url}`);
       return new Uint8Array(await response.arrayBuffer());
