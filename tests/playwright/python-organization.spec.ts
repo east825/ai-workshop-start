@@ -44,7 +44,7 @@ test('the web UI shows the skills recorded for the python organization', async (
   await expect(results.getByText('Cut a CPython release.')).toBeVisible();
   await expect(results.getByText('Check type annotations across the repository.')).toBeVisible();
 
-  await page.screenshot({ path: 'tests/playwright/screenshots/python-organization.png', fullPage: true });
+  await expect(page).toHaveScreenshot('python-organization.png', { fullPage: true });
 });
 
 test('the filter narrows the python organization results to skills whose name starts with "rel"', async ({ page }) => {
@@ -65,5 +65,5 @@ test('the filter narrows the python organization results to skills whose name st
   // The matched prefix is highlighted inside the skill name.
   await expect(names.locator('mark')).toHaveText('rel');
 
-  await page.screenshot({ path: 'tests/playwright/screenshots/python-organization-filtered.png', fullPage: true });
+  await expect(page).toHaveScreenshot('python-organization-filtered.png', { fullPage: true });
 });

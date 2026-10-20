@@ -30,12 +30,9 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
       - run: npm run test:browser
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: playwright-screenshots
-          path: tests/playwright/screenshots/
-          if-no-files-found: ignore
+      # On a screenshot mismatch, Playwright writes <name>-actual.png and <name>-diff.png next to
+      # the test under test-results/. The HTML report lets a reviewer eyeball the diff. If the
+      # new rendering is correct, comment "/update-screenshots" on the PR to refresh the baselines.
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -43,4 +40,5 @@ jobs:
           path: |
             playwright-report/
             test-results/
+          retention-days: 14
           if-no-files-found: ignore
