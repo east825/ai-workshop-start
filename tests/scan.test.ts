@@ -3,13 +3,13 @@
 // tests/helpers.ts and for recorded GitHub answers below.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { run } from '../src/commands.ts';
-import { findSkills } from '../src/core/find.ts';
+import { findSkills, SKILL_ROOTS } from '../src/core/find.ts';
 import { openGitHub } from '../src/core/github.ts';
 import { parseSkill } from '../src/core/parse.ts';
 import { replay, type Recording } from '../src/core/replay.ts';
@@ -74,7 +74,17 @@ test('this repository: the skills in ./fixture are test data, not its own', asyn
   const root = fileURLToPath(new URL('..', import.meta.url));
   const own = await atlas(['scan', root]);
   assert.equal(own.code, 0, own.stderr);
-  assert.equal(own.stdout, `${basename(root)} · 0 skills`);
+  // Its own skills, whichever it has: each SKILL.md in a skill directory of its agents' folders.
+  const skills = SKILL_ROOTS.flatMap((skillRoot) =>
+    existsSync(join(root, skillRoot))
+      ? readdirSync(join(root, skillRoot)).filter((name) => existsSync(join(root, skillRoot, name, 'SKILL.md'))).map((name) => `${skillRoot}/${name}/SKILL.md`)
+      : [],
+  );
+  const [header, ...lines] = own.stdout.split('\n');
+  assert.equal(header, `${basename(root)} · ${skills.length} ${skills.length === 1 ? 'skill' : 'skills'}`);
+  const links = lines.filter((line) => line.startsWith('  file:')).map((line) => line.trim());
+  assert.deepEqual(links.sort(), skills.map((path) => `${pathToFileURL(root).href}${path}`).sort());
+  assert.doesNotMatch(own.stdout, /fixture/);
 });
 
 test('only skills in an agent folder, outside test data and product resources, are the repository\'s own', () => {
@@ -220,4 +230,70 @@ test('rate limit → a message that asks for GITHUB_TOKEN', async () => {
   await assert.rejects(openGitHub('https://github.com/JetBrains/MPS', { fetch: limited }), {
     message: 'GitHub rate limit reached; set GITHUB_TOKEN',
   });
+});
+
+/** The `./fixture` scan with `--name-filter <glob>`: the header, then the names it lists. */
+async function filtered(...args: string[]) {
+  const scanned = await atlas(['scan', FIXTURE, ...args]);
+  assert.equal(scanned.code, 0, scanned.stderr);
+  return scanned.stdout.split('\n').filter((line) => !line.startsWith(' ')).map((line) => line.split(' — ')[0]);
+}
+
+test('--name-filter: only the skills whose whole name matches the glob, counted in the header', async () => {
+  assert.deepEqual(await filtered('--name-filter', 'c*'), ['fixture · 2 skills', 'code-style', 'commits']);
+  assert.deepEqual(await filtered('--name-filter=*-build'), ['fixture · 1 skill', 'web-build']);
+  assert.deepEqual(await filtered('--name-filter', '?ommits'), ['fixture · 1 skill', 'commits']);
+  assert.deepEqual(await filtered('--name-filter', '[rw]*'), ['fixture · 2 skills', 'release-checklist', 'web-build']);
+  assert.deepEqual(await filtered('--name-filter', '[!c]*'), ['fixture · 2 skills', 'release-checklist', 'web-build']);
+  assert.deepEqual(await filtered('--name-filter', '[^a-d]*'), ['fixture · 2 skills', 'release-checklist', 'web-build']);
+  assert.deepEqual(await filtered('--name-filter', '*'), await filtered());
+  // The whole name, case-sensitively; `\` makes `*` literal.
+  assert.deepEqual(await filtered('--name-filter', 'build'), ['fixture · 0 skills']);
+  assert.deepEqual(await filtered('--name-filter', 'C*'), ['fixture · 0 skills']);
+  assert.deepEqual(await filtered('--name-filter', 'web\\*'), ['fixture · 0 skills']);
+});
+
+test('--name-filter: before or after the repository; a matched skill keeps its copies and warnings still go to stderr', async () => {
+  const after = await atlas(['scan', FIXTURE, '--name-filter', 'commits']);
+  const before = await atlas(['scan', '--name-filter', 'commits', FIXTURE]);
+  assert.deepEqual(before, after);
+  assert.equal(after.code, 0);
+  assert.equal(
+    after.stdout,
+    [
+      'fixture · 1 skill',
+      'commits — Write commit messages the way this repository does.',
+      `  ${pathToFileURL(FIXTURE).href}/.claude/skills/commits/SKILL.md`,
+      '  also in .junie/skills/commits/SKILL.md',
+    ].join('\n'),
+  );
+  assert.equal(after.stderr, fixture.stderr);
+});
+
+test('--name-filter on GitHub: the same filter, a pinned link', async () => {
+  assert.deepEqual(await atlas(['scan', 'github.com/JetBrains/example', '--name-filter', 'com*']), example);
+  const none = await atlas(['scan', 'github.com/JetBrains/example', '--name-filter', 'code-*']);
+  assert.equal(none.code, 0, none.stderr);
+  assert.equal(none.stdout, 'JetBrains/example · 0 skills');
+});
+
+test('--name-filter without a pattern, twice, an unknown option or an invalid glob → a clear message, exit code 1', async () => {
+  const cases: [string[], RegExp][] = [
+    [['--name-filter'], /^--name-filter needs a glob pattern\nUsage: skill-atlas scan /],
+    [['--name-filter', 'a*', '--name-filter=b*'], /^--name-filter is given twice\nUsage: skill-atlas scan /],
+    [['--name', 'a*'], /^Unknown option: --name\nUsage: skill-atlas scan /],
+    [['--name-filter', '[z-a]'], /^Not a valid glob pattern: \[z-a\]$/],
+  ];
+  for (const [args, message] of cases) {
+    const failed = await atlas(['scan', FIXTURE, ...args]);
+    assert.equal(failed.code, 1, args.join(' '));
+    assert.equal(failed.stdout, '');
+    assert.match(failed.stderr, message);
+  }
+});
+
+test('the CLI takes the --name-filter glob as it is given', () => {
+  const scanned = spawnSync(process.execPath, [CLI, 'scan', FIXTURE, '--name-filter', 'web-*'], { encoding: 'utf8' });
+  assert.equal(scanned.status, 0, scanned.stderr);
+  assert.match(scanned.stdout, /^fixture · 1 skill\nweb-build — /);
 });
