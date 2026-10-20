@@ -321,9 +321,12 @@ function render(result) {
       ? plural(skills, 'skill', 'skills') + ' in ' + plural(repositories.length, 'repository', 'repositories')
       : '0 skills';
     results.append(title('h2', result.organization.id, result.organization.url, count));
+    const prefix = result.organization.id + '/';
     for (const { repository, skills } of repositories) {
       const section = element('section', 'repository');
-      section.append(title('h3', repository.id, repository.url, plural(skills.length, 'skill', 'skills')), skillList(skills));
+      // The organization's own name is already in the h2 above: drop it from the repository h3.
+      const name = repository.id.startsWith(prefix) ? repository.id.slice(prefix.length) : repository.id;
+      section.append(title('h3', name, repository.url, plural(skills.length, 'skill', 'skills')), skillList(skills));
       results.append(section);
     }
   } else {
