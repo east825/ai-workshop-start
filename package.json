@@ -12,6 +12,7 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.ts",
+    "test:e2e": "playwright test",
     "record": "node tests/record.ts https://github.com/JetBrains/MPS https://github.com/JetBrains/android https://github.com/JetBrains/koog",
     "typecheck": "tsc --noEmit"
   },
@@ -19,6 +20,7 @@
     "yaml": "^2.9.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@types/jsdom": "^28.0.3",
     "@types/node": "^24.19.0",
     "jsdom": "^29.1.1",

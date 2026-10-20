@@ -1,0 +1,25 @@
+{
+ "https://api.github.com/orgs/python": { "status": 200, "body": { "login": "python" } },
+ "https://api.github.com/search/code?q=filename:SKILL.md+org:python&per_page=100&page=1": {
+  "status": 200,
+  "body": {
+   "total_count": 2,
+   "items": [
+    { "path": ".claude/skills/release/SKILL.md", "repository": { "full_name": "python/cpython" } },
+    { "path": ".claude/skills/types/SKILL.md", "repository": { "full_name": "python/mypy" } }
+   ]
+  }
+ },
+ "https://api.github.com/repos/python/cpython": { "status": 200, "body": { "full_name": "python/cpython", "default_branch": "main" } },
+ "https://api.github.com/repos/python/cpython/commits/main": { "status": 200, "body": { "sha": "fedcba9876543210fedcba9876543210fedcba98" } },
+ "https://raw.githubusercontent.com/python/cpython/fedcba9876543210fedcba9876543210fedcba98/.claude/skills/release/SKILL.md": {
+  "status": 200,
+  "body": "---\nname: release\ndescription: Cut a CPython release. Use when preparing a new tag.\n---\n"
+ },
+ "https://api.github.com/repos/python/mypy": { "status": 200, "body": { "full_name": "python/mypy", "default_branch": "master" } },
+ "https://api.github.com/repos/python/mypy/commits/master": { "status": 200, "body": { "sha": "fedcba9876543210fedcba9876543210fedcba98" } },
+ "https://raw.githubusercontent.com/python/mypy/fedcba9876543210fedcba9876543210fedcba98/.claude/skills/types/SKILL.md": {
+  "status": 200,
+  "body": "---\nname: types\ndescription: Check type annotations across the repository. Use before opening a PR.\n---\n"
+ }
+}
