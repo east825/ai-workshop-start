@@ -17,12 +17,12 @@ export type ScanResult = { repository: Repository; skills: Skill[]; warnings: st
 
 /** fetch → find → parse. Nothing is stored: the result is all there is. */
 export async function scan(source: Source): Promise<ScanResult> {
-  const files = findSkills(source.paths, source.repository.name);
+  const files = findSkills(source.paths);
   // The files are read at the same time: on GitHub, each one is a request.
   const results = await Promise.all(files.map((file) => readSkill(source, file)));
   return {
     repository: source.repository,
-    skills: sortSkills(results.flatMap((result) => (result.skill ? [result.skill] : []))),
+    skills: sortSkills(deduplicate(results.flatMap((result) => (result.skill ? [result.skill] : [])))),
     warnings: [...source.warnings, ...results.flatMap((result) => (result.warning ? [result.warning] : []))],
   };
 }
@@ -38,7 +38,21 @@ async function readSkill(source: Source, file: SkillFile): Promise<{ skill?: Ski
     name: parsed.name ?? file.name,
     description: parsed.description,
     commit: source.repository.commit,
-    copies: file.copies,
+    copies: [],
   };
   return { skill, warning: parsed.warning && `${file.path}: ${parsed.warning}` };
+}
+
+/**
+ * One skill per name: a skill copied or linked into another agent's folder is the same skill.
+ * The first path keeps it; the others become its copies.
+ */
+function deduplicate(skills: Skill[]): Skill[] {
+  const byName = new Map<string, Skill>();
+  for (const skill of sortSkills(skills)) {
+    const first = byName.get(skill.name);
+    if (first) first.copies.push(skill.path);
+    else byName.set(skill.name, skill);
+  }
+  return [...byName.values()];
 }
