@@ -177,6 +177,11 @@ const PAGE = `<!doctype html>
   form { display: flex; gap: .5rem; }
   input { flex: 1; padding: .5rem; font: inherit; }
   button { padding: .5rem 1rem; font: inherit; cursor: pointer; }
+  #filter-wrap { position: relative; margin-top: .75rem; }
+  #filter { width: 100%; padding: .5rem; font: inherit; box-sizing: border-box; background: transparent; position: relative; }
+  #filter-mirror { position: absolute; inset: 0; padding: .5rem; font: inherit; white-space: pre; overflow: hidden; pointer-events: none; color: transparent; border: 1px solid transparent; }
+  #filter-mirror span { background: #ff0; }
+  mark { background: #ff0; color: inherit; }
   #results { margin-top: 1.5rem; border-top: 1px solid #8884; padding-top: 1rem; }
   #results:empty { display: none; }
   ul { list-style: none; padding: 0; }
@@ -196,12 +201,25 @@ const PAGE = `<!doctype html>
   <input id="repo" name="repo" placeholder="owner/repo, an organization or https://github.com/owner/repo" autocomplete="off" required autofocus>
   <button type="submit">Scan</button>
 </form>
+<div id="filter-wrap" hidden>
+  <span id="filter-mirror" aria-hidden="true"></span>
+  <input id="filter" placeholder="Filter by skill name prefix" autocomplete="off">
+</div>
 <section id="results" aria-live="polite"></section>
 <script>
 const form = document.getElementById('scan');
 const input = document.getElementById('repo');
 const button = form.querySelector('button');
+const filter = document.getElementById('filter');
+const filterWrap = document.getElementById('filter-wrap');
+const filterMirror = document.getElementById('filter-mirror');
 const results = document.getElementById('results');
+let lastResult = null;
+
+function matches(skill) {
+  const prefix = filter.value.trim().toLowerCase();
+  return !prefix || skill.name.toLowerCase().startsWith(prefix);
+}
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -226,10 +244,16 @@ function skillList(skills) {
   const list = element('ul');
   for (const skill of skills) {
     const item = element('li');
-    const name = element('a', 'name', skill.name);
+    const name = element('a', 'name');
     name.href = skill.link;
     name.target = '_blank';
     name.rel = 'noopener';
+    const prefix = filter.value.trim();
+    if (prefix && skill.name.toLowerCase().startsWith(prefix.toLowerCase())) {
+      name.append(element('mark', '', skill.name.slice(0, prefix.length)), skill.name.slice(prefix.length));
+    } else {
+      name.textContent = skill.name;
+    }
     item.append(name);
     if (skill.description) item.append(element('p', 'description', skill.description));
     if (skill.copies.length) item.append(element('div', 'copies', 'also in ' + skill.copies.join(', ')));
@@ -242,19 +266,23 @@ function render(result) {
   results.replaceChildren();
   if (result.organization) {
     // As the CLI prints an organization: its repositories with skills, each as one repository.
-    const skills = result.repositories.reduce((count, { skills }) => count + skills.length, 0);
-    const count = result.repositories.length
-      ? plural(skills, 'skill', 'skills') + ' in ' + plural(result.repositories.length, 'repository', 'repositories')
+    const repositories = result.repositories
+      .map(({ repository, skills }) => ({ repository, skills: skills.filter(matches) }))
+      .filter(({ skills }) => skills.length);
+    const skills = repositories.reduce((count, { skills }) => count + skills.length, 0);
+    const count = repositories.length
+      ? plural(skills, 'skill', 'skills') + ' in ' + plural(repositories.length, 'repository', 'repositories')
       : '0 skills';
     results.append(title('h2', result.organization.id, result.organization.url, count));
-    for (const { repository, skills } of result.repositories) {
+    for (const { repository, skills } of repositories) {
       const section = element('section', 'repository');
       section.append(title('h3', repository.id, repository.url, plural(skills.length, 'skill', 'skills')), skillList(skills));
       results.append(section);
     }
   } else {
-    results.append(title('h2', result.repository.id, result.repository.url, plural(result.skills.length, 'skill', 'skills')));
-    results.append(skillList(result.skills));
+    const skills = result.skills.filter(matches);
+    results.append(title('h2', result.repository.id, result.repository.url, plural(skills.length, 'skill', 'skills')));
+    results.append(skillList(skills));
   }
   if (result.warnings.length) {
     const warnings = element('ul', 'warnings');
@@ -269,14 +297,32 @@ async function scan(repo) {
   try {
     const response = await fetch('api/scan?repo=' + encodeURIComponent(repo));
     const body = await response.json();
-    if (response.ok) render(body);
-    else results.replaceChildren(element('p', 'error', body.error));
+    if (response.ok) {
+      lastResult = body;
+      filterWrap.hidden = false;
+      render(body);
+    } else {
+      lastResult = null;
+      filterWrap.hidden = true;
+      results.replaceChildren(element('p', 'error', body.error));
+    }
   } catch (error) {
+    lastResult = null;
+    filterWrap.hidden = true;
     results.replaceChildren(element('p', 'error', 'Cannot reach the server: ' + error.message));
   } finally {
     button.disabled = false;
   }
 }
+
+filter.addEventListener('input', () => {
+  filterMirror.replaceChildren(element('span', '', filter.value));
+  filterMirror.scrollLeft = filter.scrollLeft;
+  if (lastResult) render(lastResult);
+});
+filter.addEventListener('scroll', () => {
+  filterMirror.scrollLeft = filter.scrollLeft;
+});
 
 form.addEventListener('submit', (event) => {
   event.preventDefault();

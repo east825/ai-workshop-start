@@ -196,7 +196,7 @@ test('the page: one field for the repository and a pane below it for the skills'
   assert.match(response.headers.get('content-type') ?? '', /^text\/html/);
   const page = await response.text();
   assert.match(page, /<form id="scan">\s*<input id="repo"[^>]*placeholder="owner\/repo, an organization or https:\/\/github\.com\/owner\/repo"/);
-  assert.match(page, /<\/form>\s*<section id="results"/);
+  assert.match(page, /<\/form>\s*<div id="filter-wrap"[^>]*>[\s\S]*?<input id="filter"[\s\S]*?<\/div>\s*<section id="results"/);
   // The scan is asked for relative to the page, so it works behind a proxy's path too.
   assert.match(page, /fetch\('api\/scan\?repo=' \+ encodeURIComponent\(repo\)\)/);
   // What GitHub answers goes into the page as text, never as markup.
@@ -456,6 +456,45 @@ test('the pane: an organization, its repositories with skills, each as one repos
   const bare = await pane(await page(`${base}/?repo=Bare`));
   assert.equal(bare.querySelector('h2')!.textContent, 'Bare · 0 skills');
   assert.equal(bare.querySelector('section.repository, li'), null);
+});
+
+test('the pane: #filter narrows the list live by skill name prefix, highlighted like a text highlighter', async () => {
+  const window = await page(`${base}/?repo=acme`);
+  await pane(window);
+  const filter = window.document.querySelector<HTMLInputElement>('#filter')!;
+  const filterWrap = window.document.getElementById('filter-wrap')!;
+  const mirror = window.document.getElementById('filter-mirror')!;
+  const results = window.document.getElementById('results')!;
+  // The filter appears once there is a result.
+  assert.equal(filterWrap.hidden, false);
+  assert.equal(mirror.textContent, '');
+
+  // Typing a prefix: only matching skills remain, their matching head wrapped in <mark>, mirror echoes.
+  filter.value = 'com';
+  filter.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(mirror.querySelector('span')!.textContent, 'com');
+  const repositories = [...results.querySelectorAll<HTMLElement>(':scope > section.repository')];
+  assert.deepEqual(repositories.map((section) => section.querySelector('h3')!.textContent), ['Acme/alpha · 1 skill']);
+  assert.equal(results.querySelector('h2')!.textContent, 'Acme · 1 skill in 1 repository');
+  const name = repositories[0].querySelector('a.name')!;
+  assert.equal(name.textContent, 'commits');
+  assert.equal(name.querySelector('mark')!.textContent, 'com');
+
+  // Case-insensitive, prefix only (not a glob, not a substring).
+  filter.value = 'COM';
+  filter.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(results.querySelectorAll('a.name').length, 1);
+  filter.value = 'mits';
+  filter.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(results.querySelectorAll('a.name').length, 0);
+  assert.equal(results.querySelector('h2')!.textContent, 'Acme · 0 skills');
+
+  // Cleared: the full list is back, no <mark>.
+  filter.value = '';
+  filter.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(mirror.querySelector('span')!.textContent, '');
+  assert.equal(results.querySelectorAll('a.name').length, 3);
+  assert.equal(results.querySelector('mark'), null);
 });
 
 test('the pane: a failure → the message, in the pane', async () => {
