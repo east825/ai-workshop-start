@@ -27,9 +27,16 @@ export function createBrowserBackend(options: BrowserOptions = {}) {
   };
 }
 
-/** The words of a command line; the leading `$` and `skill-atlas` are optional. */
+/**
+ * The words of a command line; the leading `$` and `skill-atlas` are optional. One pair of
+ * matching quotes around a word is dropped, as a shell would: `--name-filter 'web-*'`.
+ */
 function words(commandLine: string): string[] {
-  const words = commandLine.trim().split(/\s+/).filter(Boolean);
+  const words = commandLine
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => (word.length >= 2 && /^(['"]).*\1$/.test(word) ? word.slice(1, -1) : word));
   if (words[0] === '$') words.shift();
   if (words[0] === 'skill-atlas') words.shift();
   return words;

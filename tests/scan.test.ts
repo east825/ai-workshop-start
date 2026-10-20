@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test } from 'node:test';
+import { createBrowserBackend } from '../src/browser.ts';
 import { run } from '../src/commands.ts';
 import { findSkills, SKILL_ROOTS } from '../src/core/find.ts';
 import { openGitHub } from '../src/core/github.ts';
@@ -296,4 +297,18 @@ test('the CLI takes the --name-filter glob as it is given', () => {
   const scanned = spawnSync(process.execPath, [CLI, 'scan', FIXTURE, '--name-filter', 'web-*'], { encoding: 'utf8' });
   assert.equal(scanned.status, 0, scanned.stderr);
   assert.match(scanned.stdout, /^fixture · 1 skill\nweb-build — /);
+});
+
+test('the browser terminal drops the quotes around a glob, as the shell does', async () => {
+  // Without a token, through the tree, as in the page.
+  const blob = (path: string) => ({ path, mode: '100644', type: 'blob', sha: path });
+  const browser = createBrowserBackend({ fetch: replay(monorepo([], [blob('.agents/skills/commits/SKILL.md')])) });
+  const scan = 'scan github.com/JetBrains/monorepo --name-filter';
+  const unquoted = await browser.run(`${scan} com*`);
+  assert.match(unquoted, /^JetBrains\/monorepo · 1 skill\ncommits — /);
+  assert.equal(await browser.run(`$ skill-atlas ${scan} 'com*'`), unquoted);
+  assert.equal(await browser.run(`${scan} "com*"`), unquoted);
+  // Only a matching pair: a lone quote is part of the pattern.
+  assert.equal(await browser.run(`${scan} 'com*`), 'JetBrains/monorepo · 0 skills');
+  assert.equal(await browser.run(`${scan} 'com*"`), 'JetBrains/monorepo · 0 skills');
 });
