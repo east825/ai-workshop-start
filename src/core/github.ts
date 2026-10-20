@@ -39,7 +39,7 @@ export async function openGitHub(input: string, options: GitHubOptions): Promise
 /**
  * The organization's repositories that may have skills. With a token, one code search over the
  * whole organization finds them, and only those are opened; without it, every repository is,
- * through its tree.
+ * through its tree. Forks are left out either way: code search does not index them.
  */
 export async function openGitHubOrganization(input: string, options: GitHubOptions): Promise<Organization> {
   const name = parseGitHubOrganizationUrl(input);
@@ -64,8 +64,9 @@ export async function openGitHubOrganization(input: string, options: GitHubOptio
   }
   const repositories: string[] = [];
   for (let page = 1; ; page++) {
-    const answer = await github.json<{ full_name: string }[]>(`${API}/orgs/${login}/repos?per_page=100&page=${page}`);
-    repositories.push(...answer.map((repository) => repository.full_name));
+    const answer = await github.json<{ full_name: string; fork: boolean }[]>(`${API}/orgs/${login}/repos?per_page=100&page=${page}`);
+    // Like code search, which never finds a fork: the same result with a token or without one.
+    repositories.push(...answer.filter((repository) => !repository.fork).map((repository) => repository.full_name));
     if (answer.length < 100) break;
   }
   return { id: login, repositories: repositories.map((id) => repository(id)), warnings };

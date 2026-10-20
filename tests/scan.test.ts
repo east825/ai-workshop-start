@@ -423,6 +423,27 @@ test('organization, the tree: every page of its repositories is scanned', async 
   );
 });
 
+test('organization, the tree: forks are left out, as code search leaves them out', async () => {
+  const recording: Recording = {
+    ...ACME,
+    [`${API}/orgs/Acme/repos?per_page=100&page=1`]: {
+      status: 200,
+      // Not answered in the recording: opening the fork fails the test.
+      body: [
+        { full_name: 'Acme/zeta', fork: false },
+        { full_name: 'Acme/tool', fork: true },
+        { full_name: 'Acme/alpha', fork: false },
+      ],
+    },
+    ...tree('Acme/zeta', ['README.md', '.claude/skills/deploy/SKILL.md']),
+    ...tree('Acme/alpha', ['.claude/skills/commits/SKILL.md', '.junie/skills/commits/SKILL.md', '.agents/skills/review/SKILL.md']),
+  };
+  const scanned = await scanRecorded('https://github.com/acme', recording);
+  assert.equal(scanned.code, 0, scanned.stderr);
+  assert.equal(scanned.stdout, ACME_OUTPUT);
+  assert.equal(scanned.stderr, MALFORMED_REVIEW);
+});
+
 test('organization, code search: one search finds the repositories with skills, only they are opened', async () => {
   const item = (repository: string, path: string) => ({ path, repository: { full_name: `Acme/${repository}` } });
   const items = [

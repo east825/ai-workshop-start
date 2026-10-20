@@ -38,6 +38,8 @@ Skill: id = `repo:path`, name, description, commit
   - Without `GITHUB_TOKEN`, every repository is listed and scanned through its tree; with it, one code search
     (`org:`) finds the repositories that have a `SKILL.md`, and only those with one of their own are scanned
   - Only repositories with skills are in the result
+  - Forks are left out, with a token or without one: code search does not index them, and their skills
+    are mostly their upstream's
   - A repository that cannot be scanned (an empty one, say) → a *warning*, the scan goes on; a rate limit stops it
   - Code search returns at most 1000 results: more → a *warning*
   - Unknown organization (a user account is not one) → a clear message, exit code 1
