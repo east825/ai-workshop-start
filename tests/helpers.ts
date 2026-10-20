@@ -27,7 +27,8 @@ const EXAMPLE: Recording = {
   },
 };
 
-const github = replay(EXAMPLE);
+/** GitHub, answering from EXAMPLE; any other request fails. */
+export const github = replay(EXAMPLE);
 
 /** `skill-atlas <args>`, as the CLI runs it, with GitHub answering from EXAMPLE. */
 export async function atlas(args: string[]) {
