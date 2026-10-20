@@ -13,13 +13,15 @@ build-tools-bump-gradle-api — Bumps the Gradle API version that Kotlin Gradle 
 …
 ```
 
-`--name-filter '<glob>'` lists only the skills whose name matches a Unix glob, such as
+`./skill-atlas scan https://github.com/JetBrains` lists the skills of every repository of an organization but its
+forks, grouped by repository. `--name-filter '<glob>'` lists only the skills whose name matches a Unix glob, such as
 `--name-filter 'build-*'`.
 
 `./skill-atlas serve` opens the same in the browser, at http://localhost:3000 (`--port` for another one, `--host` to put it on the network): paste
 `owner/repo` or a GitHub URL and the skills are listed below.
 
-Set `GITHUB_TOKEN` for a higher GitHub rate limit. `npm test` runs the tests.
+Set `GITHUB_TOKEN` for a higher GitHub rate limit: an organization soon runs out of it without one. `npm test` runs
+the tests.
 
 - [spec/](spec/): what it does, [spec/web.md](spec/web.md) for the web view. [AGENTS.md](AGENTS.md): the definition of done.
 - [fixture/](fixture/README.md): a small repository for the tests.

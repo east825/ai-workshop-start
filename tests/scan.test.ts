@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { run } from '../src/commands.ts';
 import { findSkills, SKILL_ROOTS } from '../src/core/find.ts';
-import { openGitHub } from '../src/core/github.ts';
+import { openGitHub, openGitHubOrganization, parseGitHubOrganizationUrl, parseGitHubUrl } from '../src/core/github.ts';
 import { parseSkill } from '../src/core/parse.ts';
 import { replay, type Recording } from '../src/core/replay.ts';
 import { atlas, CLI, EXAMPLE_COMMIT, FIXTURE } from './helpers.ts';
@@ -296,4 +296,274 @@ test('the CLI takes the --name-filter glob as it is given', () => {
   const scanned = spawnSync(process.execPath, [CLI, 'scan', FIXTURE, '--name-filter', 'web-*'], { encoding: 'utf8' });
   assert.equal(scanned.status, 0, scanned.stderr);
   assert.match(scanned.stdout, /^fixture · 1 skill\nweb-build — /);
+});
+
+/** `skill-atlas scan <input>`, a repository or an organization, with GitHub answering from the recording. */
+async function scanRecorded(input: string, recording: Recording, token?: string, ...options: string[]) {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const github = { fetch: replay(recording), token };
+  const code = await run(['scan', input, ...options], {
+    open: (input) => (parseGitHubUrl(input) ? openGitHub(input, github) : openGitHubOrganization(input, github)),
+    print: (text) => stdout.push(text),
+    error: (text) => stderr.push(text),
+  });
+  return { code, stdout: stdout.join('\n'), stderr: stderr.join('\n') };
+}
+
+const ORG_COMMIT = 'fedcba9876543210fedcba9876543210fedcba98';
+const API = 'https://api.github.com';
+const raw = (id: string, path: string) => `https://raw.githubusercontent.com/${id}/${ORG_COMMIT}/${path}`;
+const skillFile = (name: string, description: string) => `---\nname: ${name}\ndescription: ${description}\n---\n`;
+const blob = (path: string) => ({ path, mode: '100644', type: 'blob', sha: path });
+
+/** The repository and its default branch's commit, as GitHub answers them. */
+function repository(id: string): Recording {
+  return {
+    [`${API}/repos/${id}`]: { status: 200, body: { full_name: id, default_branch: 'main' } },
+    [`${API}/repos/${id}/commits/main`]: { status: 200, body: { sha: ORG_COMMIT } },
+  };
+}
+
+/** The tree at the commit: what the scan lists without a token. */
+function tree(id: string, paths: string[]): Recording {
+  return { [`${API}/repos/${id}/git/trees/${ORG_COMMIT}?recursive=1`]: { status: 200, body: { truncated: false, tree: paths.map(blob) } } };
+}
+
+/**
+ * The Acme organization: zeta and alpha have skills (alpha's in two agents' folders), docs has
+ * none, tooling has only test data's, and empty has no commits yet.
+ */
+const ACME: Recording = {
+  [`${API}/orgs/acme`]: { status: 200, body: { login: 'Acme' } },
+  ...repository('Acme/zeta'),
+  ...repository('Acme/alpha'),
+  [raw('Acme/zeta', '.claude/skills/deploy/SKILL.md')]: { status: 200, body: skillFile('deploy', 'Deploy the service. Use before a release.') },
+  [raw('Acme/alpha', '.claude/skills/commits/SKILL.md')]: { status: 200, body: skillFile('commits', 'Write commit messages. Use for every commit.') },
+  [raw('Acme/alpha', '.junie/skills/commits/SKILL.md')]: { status: 200, body: skillFile('commits', 'Write commit messages. Use for every commit.') },
+  [raw('Acme/alpha', '.agents/skills/review/SKILL.md')]: { status: 200, body: '---\nname: [review\n---\n' },
+};
+
+const ACME_OUTPUT = [
+  'Acme · 3 skills in 2 repositories',
+  '',
+  'Acme/alpha · 2 skills',
+  'commits — Write commit messages.',
+  `  https://github.com/Acme/alpha/blob/${ORG_COMMIT}/.claude/skills/commits/SKILL.md`,
+  '  also in .junie/skills/commits/SKILL.md',
+  'review',
+  `  https://github.com/Acme/alpha/blob/${ORG_COMMIT}/.agents/skills/review/SKILL.md`,
+  '',
+  'Acme/zeta · 1 skill',
+  'deploy — Deploy the service.',
+  `  https://github.com/Acme/zeta/blob/${ORG_COMMIT}/.claude/skills/deploy/SKILL.md`,
+].join('\n');
+
+const MALFORMED_REVIEW =
+  'warning: Acme/alpha: .agents/skills/review/SKILL.md: malformed front matter: Flow sequence in block collection must be sufficiently indented and end with a ] at line 2, column 14; using the directory name';
+
+test('an organization URL is not a repository URL', () => {
+  for (const input of ['https://github.com/JetBrains', 'github.com/JetBrains/', 'http://www.github.com/JetBrains']) {
+    assert.deepEqual(parseGitHubOrganizationUrl(input), { owner: 'JetBrains' }, input);
+    assert.equal(parseGitHubUrl(input), undefined, input);
+  }
+  assert.equal(parseGitHubOrganizationUrl('https://github.com/JetBrains/kotlin'), undefined);
+  assert.equal(parseGitHubOrganizationUrl('./fixture'), undefined);
+});
+
+test('organization, the tree: skills grouped by repository, sorted by its name; repositories without skills are not listed', async () => {
+  const recording: Recording = {
+    ...ACME,
+    [`${API}/orgs/Acme/repos?per_page=100&page=1`]: {
+      status: 200,
+      body: ['zeta', 'docs', 'empty', 'tooling', 'alpha'].map((name) => ({ full_name: `Acme/${name}` })),
+    },
+    ...tree('Acme/zeta', ['README.md', '.claude/skills/deploy/SKILL.md']),
+    ...tree('Acme/alpha', ['.claude/skills/commits/SKILL.md', '.junie/skills/commits/SKILL.md', '.agents/skills/review/SKILL.md']),
+    ...repository('Acme/docs'),
+    ...tree('Acme/docs', ['README.md', 'docs/SKILL.md']),
+    ...repository('Acme/tooling'),
+    ...tree('Acme/tooling', ['testData/.claude/skills/sample/SKILL.md']),
+    // What GitHub answers for a repository without commits.
+    [`${API}/repos/Acme/empty`]: { status: 200, body: { full_name: 'Acme/empty', default_branch: 'main' } },
+    [`${API}/repos/Acme/empty/commits/main`]: { status: 409, body: { message: 'Git Repository is empty.' } },
+  };
+  const scanned = await scanRecorded('https://github.com/acme', recording);
+  assert.equal(scanned.code, 0, scanned.stderr);
+  assert.equal(scanned.stdout, ACME_OUTPUT);
+  // Warnings name their repository, in the organization's order; an unscannable repository is skipped.
+  assert.equal(
+    scanned.stderr,
+    [`warning: Acme/empty: skipped: GitHub answered 409 for ${API}/repos/Acme/empty/commits/main: Git Repository is empty.`, MALFORMED_REVIEW].join('\n'),
+  );
+});
+
+test('organization, the tree: every page of its repositories is scanned', async () => {
+  const names = Array.from({ length: 101 }, (_, index) => `Acme/r${String(index).padStart(3, '0')}`);
+  const recording: Recording = {
+    [`${API}/orgs/acme`]: { status: 200, body: { login: 'Acme' } },
+    [`${API}/orgs/Acme/repos?per_page=100&page=1`]: { status: 200, body: names.slice(0, 100).map((full_name) => ({ full_name })) },
+    [`${API}/orgs/Acme/repos?per_page=100&page=2`]: { status: 200, body: names.slice(100).map((full_name) => ({ full_name })) },
+  };
+  for (const name of names) Object.assign(recording, repository(name), tree(name, ['README.md']));
+  Object.assign(recording, tree('Acme/r100', ['.claude/skills/deploy/SKILL.md']), {
+    [raw('Acme/r100', '.claude/skills/deploy/SKILL.md')]: { status: 200, body: skillFile('deploy', 'Deploy the service.') },
+  });
+  const scanned = await scanRecorded('github.com/acme', recording);
+  assert.equal(scanned.code, 0, scanned.stderr);
+  assert.equal(
+    scanned.stdout,
+    [
+      'Acme · 1 skill in 1 repository',
+      '',
+      'Acme/r100 · 1 skill',
+      'deploy — Deploy the service.',
+      `  https://github.com/Acme/r100/blob/${ORG_COMMIT}/.claude/skills/deploy/SKILL.md`,
+    ].join('\n'),
+  );
+});
+
+test('organization, the tree: forks are left out, as code search leaves them out', async () => {
+  const recording: Recording = {
+    ...ACME,
+    [`${API}/orgs/Acme/repos?per_page=100&page=1`]: {
+      status: 200,
+      // Not answered in the recording: opening the fork fails the test.
+      body: [
+        { full_name: 'Acme/zeta', fork: false },
+        { full_name: 'Acme/tool', fork: true },
+        { full_name: 'Acme/alpha', fork: false },
+      ],
+    },
+    ...tree('Acme/zeta', ['README.md', '.claude/skills/deploy/SKILL.md']),
+    ...tree('Acme/alpha', ['.claude/skills/commits/SKILL.md', '.junie/skills/commits/SKILL.md', '.agents/skills/review/SKILL.md']),
+  };
+  const scanned = await scanRecorded('https://github.com/acme', recording);
+  assert.equal(scanned.code, 0, scanned.stderr);
+  assert.equal(scanned.stdout, ACME_OUTPUT);
+  assert.equal(scanned.stderr, MALFORMED_REVIEW);
+});
+
+test('organization, code search: one search finds the repositories with skills, only they are opened', async () => {
+  const item = (repository: string, path: string) => ({ path, repository: { full_name: `Acme/${repository}` } });
+  const items = [
+    item('zeta', '.claude/skills/deploy/SKILL.md'),
+    item('alpha', '.claude/skills/commits/SKILL.md'),
+    item('alpha', '.junie/skills/commits/SKILL.md'),
+    item('alpha', '.agents/skills/review/SKILL.md'),
+    // Not answered in the recording: opening either repository fails the test.
+    item('tooling', 'testData/.claude/skills/sample/SKILL.md'),
+    item('docs', 'docs/SKILL.md'),
+  ];
+  const recording: Recording = {
+    ...ACME,
+    [`${API}/search/code?q=filename:SKILL.md+org:Acme&per_page=100&page=1`]: { status: 200, body: { total_count: items.length, items } },
+  };
+  const scanned = await scanRecorded('https://github.com/acme', recording, 'test');
+  assert.equal(scanned.code, 0, scanned.stderr);
+  assert.equal(scanned.stdout, ACME_OUTPUT);
+  assert.equal(scanned.stderr, MALFORMED_REVIEW);
+});
+
+test('organization with --name-filter: only the matching skills; a repository without one is not listed', async () => {
+  const item = (repository: string, path: string) => ({ path, repository: { full_name: `Acme/${repository}` } });
+  const items = [
+    item('zeta', '.claude/skills/deploy/SKILL.md'),
+    item('alpha', '.claude/skills/commits/SKILL.md'),
+    item('alpha', '.junie/skills/commits/SKILL.md'),
+    item('alpha', '.agents/skills/review/SKILL.md'),
+  ];
+  const recording: Recording = {
+    ...ACME,
+    [`${API}/search/code?q=filename:SKILL.md+org:Acme&per_page=100&page=1`]: { status: 200, body: { total_count: items.length, items } },
+  };
+  const scanned = await scanRecorded('https://github.com/acme', recording, 'test', '--name-filter', 'd*');
+  assert.equal(scanned.code, 0, scanned.stderr);
+  assert.equal(
+    scanned.stdout,
+    [
+      'Acme · 1 skill in 1 repository',
+      '',
+      'Acme/zeta · 1 skill',
+      'deploy — Deploy the service.',
+      `  https://github.com/Acme/zeta/blob/${ORG_COMMIT}/.claude/skills/deploy/SKILL.md`,
+    ].join('\n'),
+  );
+  // Warnings are printed as without the filter.
+  assert.equal(scanned.stderr, MALFORMED_REVIEW);
+  const none = await scanRecorded('https://github.com/acme', recording, 'test', '--name-filter', 'x*');
+  assert.equal(none.stdout, 'Acme · 0 skills');
+});
+
+test('organization, code search: more than 1000 SKILL.md files → a warning that some are left out', async () => {
+  const recording: Recording = { [`${API}/orgs/acme`]: { status: 200, body: { login: 'Acme' } } };
+  for (let page = 1; page <= 10; page++) {
+    const items = Array.from({ length: 100 }, (_, index) => ({
+      path: `testData/.claude/skills/s${page}-${index}/SKILL.md`,
+      repository: { full_name: 'Acme/tooling' },
+    }));
+    recording[`${API}/search/code?q=filename:SKILL.md+org:Acme&per_page=100&page=${page}`] = { status: 200, body: { total_count: 1500, items } };
+  }
+  const scanned = await scanRecorded('github.com/acme', recording, 'test');
+  assert.equal(scanned.code, 0, scanned.stderr);
+  assert.equal(scanned.stdout, 'Acme · 0 skills');
+  assert.equal(scanned.stderr, 'warning: code search found 1500 SKILL.md files, but returns only the first 1000');
+});
+
+test('organization without skills → the organization, 0 skills', async () => {
+  const recording: Recording = {
+    [`${API}/orgs/acme`]: { status: 200, body: { login: 'Acme' } },
+    [`${API}/search/code?q=filename:SKILL.md+org:Acme&per_page=100&page=1`]: { status: 200, body: { total_count: 0, items: [] } },
+  };
+  const scanned = await scanRecorded('github.com/acme', recording, 'test');
+  assert.equal(scanned.code, 0, scanned.stderr);
+  assert.equal(scanned.stdout, 'Acme · 0 skills');
+});
+
+test('unreachable organization → a clear message, exit code 1', async () => {
+  const notFound = await scanRecorded('https://github.com/no-such-organization', {
+    [`${API}/orgs/no-such-organization`]: { status: 404, body: { message: 'Not Found' } },
+  });
+  assert.equal(notFound.code, 1);
+  assert.equal(notFound.stdout, '');
+  assert.equal(notFound.stderr, 'Organization not found: https://github.com/no-such-organization');
+});
+
+test('organization: a rate limit stops the scan with a message that asks for GITHUB_TOKEN', async () => {
+  const limited = await scanRecorded('github.com/acme', {
+    [`${API}/orgs/acme`]: { status: 200, body: { login: 'Acme' } },
+    [`${API}/orgs/Acme/repos?per_page=100&page=1`]: { status: 200, body: [{ full_name: 'Acme/zeta' }, { full_name: 'Acme/alpha' }] },
+    ...repository('Acme/zeta'),
+    ...tree('Acme/zeta', []),
+    [`${API}/repos/Acme/alpha`]: { status: 403, body: { message: 'API rate limit exceeded for 192.0.2.1.' } },
+  });
+  assert.equal(limited.code, 1);
+  assert.equal(limited.stdout, '');
+  assert.equal(limited.stderr, 'GitHub rate limit reached; set GITHUB_TOKEN');
+});
+
+test('organization, code search: a private repository\'s skills are read with the token', async () => {
+  const items = [{ path: '.claude/skills/deploy/SKILL.md', repository: { full_name: 'Acme/zeta' } }];
+  const recorded = replay({
+    ...ACME,
+    [`${API}/search/code?q=filename:SKILL.md+org:Acme&per_page=100&page=1`]: { status: 200, body: { total_count: 1, items } },
+  });
+  // As raw.githubusercontent.com answers for a private repository: 404 without the token.
+  const github = {
+    token: 'test',
+    fetch: (url: string, init?: { headers?: Record<string, string> }) =>
+      url.startsWith('https://raw.githubusercontent.com/') && init?.headers?.Authorization !== 'Bearer test'
+        ? Promise.resolve(new Response('404: Not Found', { status: 404 }))
+        : recorded(url, init),
+  };
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const code = await run(['scan', 'https://github.com/acme'], {
+    open: (input) => openGitHubOrganization(input, github),
+    print: (text) => stdout.push(text),
+    error: (text) => stderr.push(text),
+  });
+  assert.equal(code, 0, stderr.join('\n'));
+  assert.equal(stderr.join('\n'), '');
+  assert.match(stdout.join('\n'), /^Acme · 1 skill in 1 repository\n\nAcme\/zeta · 1 skill\ndeploy — Deploy the service\./);
 });
