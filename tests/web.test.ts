@@ -352,8 +352,11 @@ test('serve: --port and --host, a clear message for a wrong one or a port in use
   });
 });
 
-test('the CLI: skill-atlas serve prints its address and answers there, for localhost only', async (t) => {
+test('the CLI: skill-atlas serve prints its address and answers there, for localhost only, never with its token', async (t) => {
+  // The token comes from serve's environment; nothing the server answers may contain it.
+  const token = 'ghp_skill_atlas_test_token';
   const child = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', CLI, 'serve', '--port', '0'], {
+    env: { ...process.env, GITHUB_TOKEN: token },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   t.after(() => child.kill());
@@ -362,9 +365,13 @@ test('the CLI: skill-atlas serve prints its address and answers there, for local
   assert.ok(address, line);
   const page = await fetch(`${address}/`);
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /<title>Skill Atlas<\/title>/);
+  const html = await page.text();
+  assert.match(html, /<title>Skill Atlas<\/title>/);
+  assert.ok(!line.includes(token) && !html.includes(token));
+  assert.ok(!JSON.stringify([...page.headers]).includes(token));
   // Rejected before any request to GitHub: the test never reaches the network.
   const local = await fetch(`${address}/api/scan?repo=${encodeURIComponent('./fixture')}`);
   assert.equal(local.status, 400);
+  assert.ok(!(await local.text()).includes(token));
   assert.equal(await getAs(`${address}/`, 'attacker.example'), 403);
 });
