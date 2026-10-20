@@ -2,11 +2,11 @@
 
 ## Input
 
-A **GitHub repository** URL, or a local directory
+A **GitHub repository** URL, a **GitHub organization** URL, or a local directory
 
 ## Output
 
-Every `SKILL.md`: **name**, **description**, **link**
+Every `SKILL.md`: **name**, **description**, **link**; for an organization, of each of its repositories
 
 ## Architecture
 
@@ -34,6 +34,13 @@ Skill: id = `repo:path`, name, description, commit
     resources: `test`, `tests`, `testData`, `test-data`, `jvmTest`, `e2e-tests`, `__tests__`, `fixtures`, `mocks`,
     `snapshots`, `resources`, `templates` and the like
   - The skill's own directories are not checked: `.claude/skills/tests` is a skill
+- An organization is every repository of it, each scanned as above, at its own default branch
+  - Without `GITHUB_TOKEN`, every repository is listed and scanned through its tree; with it, one code search
+    (`org:`) finds the repositories that have a `SKILL.md`, and only those with one of their own are scanned
+  - Only repositories with skills are in the result
+  - A repository that cannot be scanned (an empty one, say) → a *warning*, the scan goes on; a rate limit stops it
+  - Code search returns at most 1000 results: more → a *warning*
+  - Unknown organization (a user account is not one) → a clear message, exit code 1
 
 ## Real repositories
 
