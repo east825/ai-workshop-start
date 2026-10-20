@@ -29,8 +29,9 @@ A pane below the field, as in the CLI:
   `also in <paths>` for copies
 - Sorted by **name**; warnings below the list
 - An organization, as the CLI prints it: `JetBrains · N skills in M repositories`, linked to the
-  organization; then each repository with skills, sorted by its name, as one repository is shown above;
-  with none at all, `JetBrains · 0 skills`; warnings below, each starting with its repository
+  organization; then each repository with skills, sorted by its name, as one repository is shown above,
+  but under its *short name*: `repo · N skills`, without the organization's `JetBrains/` already in the
+  header above, still linked to the repository; with none at all, `JetBrains · 0 skills`; warnings below, each starting with its repository
 - Failure (repository or organization not found, rate limit, GitHub unreachable) → the CLI's message, in the pane
 - `?repo=<input>` in the page's address scans at once: a scan can be shared as a link
 ## API
