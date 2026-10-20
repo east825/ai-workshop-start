@@ -431,8 +431,8 @@ test('the pane: an organization, its repositories with skills, each as one repos
   assert.deepEqual(
     repositories.map((section) => ({ title: section.querySelector('h3')!.textContent, link: section.querySelector<HTMLAnchorElement>('h3 a')!.href })),
     [
-      { title: 'Acme/alpha · 2 skills', link: 'https://github.com/Acme/alpha' },
-      { title: 'Acme/zeta · 1 skill', link: 'https://github.com/Acme/zeta' },
+      { title: 'alpha · 2 skills', link: 'https://github.com/Acme/alpha' },
+      { title: 'zeta · 1 skill', link: 'https://github.com/Acme/zeta' },
     ],
   );
   assert.deepEqual(listed(repositories[0]), [
@@ -474,7 +474,7 @@ test('the pane: #filter narrows the list live by skill name prefix, highlighted 
   filter.dispatchEvent(new window.Event('input', { bubbles: true }));
   assert.equal(mirror.querySelector('span')!.textContent, 'com');
   const repositories = [...results.querySelectorAll<HTMLElement>(':scope > section.repository')];
-  assert.deepEqual(repositories.map((section) => section.querySelector('h3')!.textContent), ['Acme/alpha · 1 skill']);
+  assert.deepEqual(repositories.map((section) => section.querySelector('h3')!.textContent), ['alpha · 1 skill']);
   assert.equal(results.querySelector('h2')!.textContent, 'Acme · 1 skill in 1 repository');
   const name = repositories[0].querySelector('a.name')!;
   assert.equal(name.textContent, 'commits');
