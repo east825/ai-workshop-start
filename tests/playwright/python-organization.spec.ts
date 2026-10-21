@@ -67,3 +67,22 @@ test('the filter narrows the python organization results to skills whose name st
 
   await expect(page).toHaveScreenshot('python-organization-filtered.png', { fullPage: true });
 });
+
+test('grouping by shared words splits each repository of the python organization on its own', async ({ page }) => {
+  await page.goto(`${base}/?repo=python`);
+  const results = page.locator('#results');
+  await expect(results.locator('h2')).toContainText('2 skills in 2 repositories');
+
+  await page.getByLabel('Group by shared words in names').check();
+
+  // Grouped across the organization, the two would be one "other · 2 skills": each repository has its own.
+  const sections = results.locator('section.repository');
+  await expect(sections).toHaveCount(2);
+  await expect(results.locator('h4.group')).toHaveCount(2);
+  await expect(sections.nth(0).locator('h3')).toContainText('python/cpython · 1 skill');
+  await expect(sections.nth(0).locator('h4.group')).toHaveText('other · 1 skill');
+  await expect(sections.nth(0).locator('a.name')).toHaveText(['release']);
+  await expect(sections.nth(1).locator('h3')).toContainText('python/mypy · 1 skill');
+  await expect(sections.nth(1).locator('h4.group')).toHaveText('other · 1 skill');
+  await expect(sections.nth(1).locator('a.name')).toHaveText(['types']);
+});
