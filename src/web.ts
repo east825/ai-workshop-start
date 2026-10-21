@@ -182,6 +182,11 @@ const PAGE = `<!doctype html>
   #filter-mirror { position: absolute; inset: 0; padding: .5rem; font: inherit; white-space: pre; overflow: hidden; pointer-events: none; color: transparent; border: 1px solid transparent; }
   #filter-mirror span { background: #ff0; }
   mark { background: #ff0; color: inherit; }
+  /* A highlighter is yellow in both themes; in dark, the adaptive light text would vanish on it. */
+  @media (prefers-color-scheme: dark) {
+    #filter { color: #000; caret-color: CanvasText; }
+    mark { color: #000; }
+  }
   #group-wrap { margin-top: .5rem; font-size: .9em; color: #666; }
   #results { margin-top: 1.5rem; border-top: 1px solid #8884; padding-top: 1rem; }
   #results:empty { display: none; }

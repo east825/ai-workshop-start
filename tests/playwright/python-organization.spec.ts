@@ -67,3 +67,42 @@ test('the filter narrows the python organization results to skills whose name st
 
   await expect(page).toHaveScreenshot('python-organization-filtered.png', { fullPage: true });
 });
+
+/** WCAG contrast ratio of two `rgb(r, g, b)` colors, as computed by the browser. */
+function contrast(a: string, b: string): number {
+  const luminance = (color: string) => {
+    const [r, g, b] = color.match(/\d+(\.\d+)?/g)!.slice(0, 3).map((c) => {
+      const s = Number(c) / 255;
+      return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (light + 0.05) / (dark + 0.05);
+}
+
+for (const colorScheme of ['light', 'dark'] as const) {
+  test.describe(`${colorScheme} theme`, () => {
+    test.use({ colorScheme });
+
+    test('the filter highlight stays readable: the typed prefix and the matched one in names', async ({ page }) => {
+      await page.goto(`${base}/?repo=python`);
+      const results = page.locator('#results');
+      await expect(results.locator('h2')).toContainText('2 skills in 2 repositories');
+
+      const filter = page.getByPlaceholder(/Filter by skill name prefix/);
+      await filter.fill('rel');
+      const mark = results.locator('a.name mark');
+      await expect(mark).toHaveText('rel');
+
+      const style = (selector: string) =>
+        page.locator(selector).evaluate((e) => ({ color: getComputedStyle(e).color, background: getComputedStyle(e).backgroundColor }));
+      // The typed text is the input's own, drawn over the mirror's highlighted span.
+      const typed = (await style('#filter')).color;
+      const highlight = (await style('#filter-mirror span')).background;
+      expect(contrast(typed, highlight)).toBeGreaterThanOrEqual(4.5);
+      const marked = await style('#results a.name mark');
+      expect(contrast(marked.color, marked.background)).toBeGreaterThanOrEqual(4.5);
+    });
+  });
+}
