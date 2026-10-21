@@ -5,9 +5,7 @@ on:
   push:
   pull_request:
 permissions:
-  # Needed on failure to push diff images to the `screenshot-diffs` branch and comment on the PR.
-  contents: write
-  pull-requests: write
+  contents: read
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -32,15 +30,8 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
       - run: npm run test:browser
-      # On a screenshot mismatch, publish the expected/actual/diff triples inline in a PR comment so
-      # a reviewer can look without downloading an artifact, and tell them to accept with
-      # /accept-screenshot <name>. The full report is still kept as an artifact for anything else.
-      - name: Publish screenshot diffs to the PR
-        if: failure() && github.event_name == 'pull_request'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: node .github/scripts/publish-screenshot-diffs.mjs
+      # On a screenshot mismatch, Playwright writes <name>-actual.png and <name>-diff.png next to
+      # the test under test-results/. The publish-screenshot-diffs job below shows them on the PR.
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -50,3 +41,35 @@ jobs:
             test-results/
           retention-days: 14
           if-no-files-found: ignore
+  # On a screenshot mismatch, publish the expected/actual/diff triples inline in a PR comment so
+  # a reviewer can look without downloading an artifact, and tell them to accept with
+  # /accept-screenshot <name>. This is a separate job so that only it gets a write token: the test
+  # job runs npm ci and the tests with a read-only one. A fork's token is read-only, so skip forks.
+  publish-screenshot-diffs:
+    needs: test
+    if: >-
+      failure() && github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # Restores test-results/. There is no artifact if the test job failed before writing any
+      # results; the script then finds no diffs and publishes nothing.
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: playwright-report
+      - name: Publish screenshot diffs to the PR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node .github/scripts/publish-screenshot-diffs.mjs
