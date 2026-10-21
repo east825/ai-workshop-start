@@ -2,6 +2,7 @@
 // Asks a question in a Slack channel and waits for the answer: for an agent that needs a human
 // decision before it goes on. spec/slack.md. `SLACK_BOT_TOKEN`: a bot token that is a member of the channel.
 //   node scripts/slack.ts ask <channel> <text> [--timeout <minutes>]
+//   node scripts/slack.ts wait <channel> <ts> [--timeout <minutes>]
 //   node scripts/slack.ts post <channel> <text>
 
 export type Fetch = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<Response>;
@@ -99,7 +100,8 @@ export async function waitForReply(options: SlackOptions, channel: string, ts: s
 
 /** `slack.ts <args>`: the exit code; the reply goes to `print`. */
 export async function run(args: string[], options: SlackOptions & { print: (text: string) => void; error: (text: string) => void }) {
-  const usage = 'Usage: node scripts/slack.ts ask <channel> <text> [--timeout <minutes>] | post <channel> <text>';
+  const usage =
+    'Usage: node scripts/slack.ts ask <channel> <text> [--timeout <minutes>] | wait <channel> <ts> [--timeout <minutes>] | post <channel> <text>';
   let timeout = 60;
   const rest: string[] = [];
   for (let i = 0; i < args.length; i++) {
@@ -109,13 +111,21 @@ export async function run(args: string[], options: SlackOptions & { print: (text
     } else rest.push(args[i]);
   }
   const [command, channel, text, ...extra] = rest;
-  if (!['ask', 'post'].includes(command) || !channel || !text || extra.length) return options.error(usage), 1;
+  if (!['ask', 'wait', 'post'].includes(command) || !channel || !text || extra.length) return options.error(usage), 1;
+  if (command === 'wait' && !/^\d+\.\d+$/.test(text)) return options.error(`wait: a message timestamp such as 1700000000.000100, not ${text}\n${usage}`), 1;
   if (!options.token) return options.error('Set SLACK_BOT_TOKEN.'), 1;
   try {
-    const posted = await post(options, channel, command === 'ask' ? `${text}\n\n${REPLY_HINT}` : text);
-    if (command === 'post') return options.print(posted.ts), 0;
-    const reply = await waitForReply(options, posted.channel, posted.ts, timeout * 60_000);
-    if (reply === undefined) return options.error(`No reply in ${channel} within ${timeout} minutes.`), 2;
+    const question =
+      command === 'wait'
+        ? { channel: await findChannel(options, channel), ts: text }
+        : await post(options, channel, command === 'ask' ? `${text}\n\n${REPLY_HINT}` : text);
+    if (command === 'post') return options.print(question.ts), 0;
+    const reply = await waitForReply(options, question.channel, question.ts, timeout * 60_000);
+    if (reply === undefined) {
+      // A caller whose commands may not run that long waits in rounds: this is the next one.
+      const again = `node scripts/slack.ts wait ${question.channel} ${question.ts} --timeout ${timeout}`;
+      return options.error(`No reply in ${channel} within ${timeout} minutes. To wait longer: ${again}`), 2;
+    }
     options.print(reply);
     return 0;
   } catch (e) {

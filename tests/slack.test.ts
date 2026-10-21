@@ -141,10 +141,26 @@ test('ask: no reply within --timeout → exit code 2; 60 minutes by default', as
   const short = await slackTs(['ask', 'air-automation-probe', 'q', '--timeout', '1']);
   assert.equal(short.code, 2);
   assert.match(short.stderr, /No reply in air-automation-probe within 1 minutes/);
+  assert.match(short.stderr, new RegExp(`To wait longer: node scripts/slack.ts wait ${CHANNEL} ${QUESTION} --timeout 1$`));
   assert.equal(short.sleeps.reduce((a, b) => a + b, 0), 60_000);
   const long = await slackTs(['ask', 'air-automation-probe', 'q']);
   assert.equal(long.code, 2);
   assert.equal(long.sleeps.reduce((a, b) => a + b, 0), 60 * 60_000);
+});
+
+test('wait: waits for a reply to a question posted before, without posting; on none, the same command again', async () => {
+  const answered = await slackTs(['wait', '#air-automation-probe', QUESTION, '--timeout', '9'], {
+    threads: [[], [{ ts: '1700000001.000000', user: HUMAN, text: 'The second' }]],
+  });
+  assert.equal(answered.code, 0);
+  assert.equal(answered.stdout, 'The second');
+  assert.ok(!answered.calls.some((c) => c.method === 'chat.postMessage'));
+  assert.deepEqual(answered.calls.find((c) => c.method === 'conversations.replies')?.params, { channel: CHANNEL, ts: QUESTION });
+  const none = await slackTs(['wait', CHANNEL, QUESTION, '--timeout', '9']);
+  assert.equal(none.code, 2);
+  assert.equal(none.sleeps.reduce((a, b) => a + b, 0), 9 * 60_000);
+  assert.ok(none.stderr.endsWith(`To wait longer: node scripts/slack.ts wait ${CHANNEL} ${QUESTION} --timeout 9`));
+  assert.ok(!none.calls.some((c) => c.method === 'conversations.list'));
 });
 
 test('post: posts only and prints the timestamp', async () => {
@@ -166,7 +182,7 @@ test('an unknown channel or a Slack error → a clear message, exit code 1', asy
 
 test('no token, missing arguments, an unknown command or a bad --timeout → the usage, exit code 1', async () => {
   assert.equal((await slackTs(['ask', 'c', 'q'], {}, '')).stderr, 'Set SLACK_BOT_TOKEN.');
-  for (const args of [[], ['ask', 'c'], ['send', 'c', 'q'], ['ask', 'c', 'q', 'extra'], ['ask', 'c', 'q', '--timeout', '0'], ['ask', 'c', 'q', '--timeout']]) {
+  for (const args of [[], ['ask', 'c'], ['send', 'c', 'q'], ['ask', 'c', 'q', 'extra'], ['ask', 'c', 'q', '--timeout', '0'], ['ask', 'c', 'q', '--timeout'], ['wait', 'c'], ['wait', 'c', 'not-a-ts']]) {
     const r = await slackTs(args);
     assert.equal(r.code, 1, args.join(' '));
     assert.match(r.stderr, /Usage:/, args.join(' '));
