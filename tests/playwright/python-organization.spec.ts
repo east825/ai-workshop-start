@@ -91,6 +91,16 @@ for (const colorScheme of ['light', 'dark'] as const) {
       await expect(results.locator('h2')).toContainText('2 skills in 2 repositories');
 
       const filter = page.getByPlaceholder(/Filter by skill name prefix/);
+      // Empty, the field's color is the page's own: Firefox draws the placeholder in it.
+      const empty = await filter.evaluate((e) => getComputedStyle(e).color);
+      const canvas = await page.evaluate(() => {
+        const probe = document.body.appendChild(document.createElement('div'));
+        probe.style.color = 'Canvas';
+        const color = getComputedStyle(probe).color;
+        probe.remove();
+        return color;
+      });
+      expect(contrast(empty, canvas)).toBeGreaterThanOrEqual(4.5);
       await filter.fill('rel');
       const mark = results.locator('a.name mark');
       await expect(mark).toHaveText('rel');

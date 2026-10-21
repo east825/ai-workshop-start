@@ -184,7 +184,9 @@ const PAGE = `<!doctype html>
   mark { background: #ff0; color: inherit; }
   /* A highlighter is yellow in both themes; in dark, the adaptive light text would vanish on it. */
   @media (prefers-color-scheme: dark) {
-    #filter { color: #000; caret-color: CanvasText; }
+    /* Only typed text: Firefox derives the placeholder from the input's color. */
+    #filter { caret-color: CanvasText; }
+    #filter:not(:placeholder-shown) { color: #000; }
     mark { color: #000; }
   }
   #group-wrap { margin-top: .5rem; font-size: .9em; color: #666; }
