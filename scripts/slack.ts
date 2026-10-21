@@ -5,7 +5,10 @@
 //   node scripts/slack.ts wait <channel> <ts> [--timeout <minutes>]
 //   node scripts/slack.ts post <channel> <text>
 
-export type Fetch = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<Response>;
+export type Fetch = (
+  url: string,
+  init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal },
+) => Promise<Response>;
 
 export type SlackOptions = {
   fetch: Fetch;
@@ -13,6 +16,8 @@ export type SlackOptions = {
   /** Waits between two looks for a reply; a test does not wait. */
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
+  /** Aborts a look that stalls after `ms`; a test does not wait. */
+  timeout?: (ms: number) => AbortSignal;
 };
 
 /** A message in a channel, as Slack answers it. */
@@ -21,20 +26,50 @@ type Message = { ts: string; text?: string; user?: string; bot_id?: string; subt
 const API = 'https://slack.com/api/';
 /** How often to look for a reply. */
 export const POLL_MS = 10_000;
+/** The longest a look may take: `fetch` alone would wait up to 300 s for the headers and 300 s more for the body. */
+export const LOOK_MS = 30_000;
 
-export class SlackError extends Error {}
+export class SlackError extends Error {
+  /**
+   * A failure that may pass if asked again: the network, a body that breaks off or is not JSON, a 5xx or a 429. `retryAfterMs`: how long Slack asks to wait
+   * first, from `Retry-After`.
+   */
+  readonly transient: boolean;
+  readonly retryAfterMs: number;
+  constructor(message: string, transient = false, retryAfterMs = 0) {
+    super(message);
+    this.transient = transient;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
 
-async function call(options: SlackOptions, method: string, params: Record<string, string>, post = false): Promise<any> {
+async function call(options: SlackOptions, method: string, params: Record<string, string>, post = false, signal?: AbortSignal): Promise<any> {
   const headers = { Authorization: `Bearer ${options.token}` };
-  const response = post
-    ? await options.fetch(API + method, {
-        method: 'POST',
-        headers: { ...headers, 'Content-Type': 'application/json; charset=utf-8' },
-        body: JSON.stringify(params),
-      })
-    : await options.fetch(`${API}${method}?${new URLSearchParams(params)}`, { headers });
-  if (!response.ok) throw new SlackError(`Slack ${method}: HTTP ${response.status}`);
-  const body = await response.json();
+  let response: Response;
+  try {
+    response = post
+      ? await options.fetch(API + method, {
+          method: 'POST',
+          headers: { ...headers, 'Content-Type': 'application/json; charset=utf-8' },
+          body: JSON.stringify(params),
+          signal,
+        })
+      : await options.fetch(`${API}${method}?${new URLSearchParams(params)}`, { headers, signal });
+  } catch (e) {
+    throw new SlackError(`Slack ${method}: ${e instanceof Error ? e.message : e}`, true);
+  }
+  if (!response.ok) {
+    const retryAfter = Number(response.headers.get('Retry-After'));
+    const transient = response.status === 429 || response.status >= 500;
+    throw new SlackError(`Slack ${method}: HTTP ${response.status}`, transient, retryAfter > 0 ? retryAfter * 1000 : 0);
+  }
+  // The body may break off too, stall until `signal` aborts it, or not be JSON at all: a proxy's error page.
+  let body: any;
+  try {
+    body = await response.json();
+  } catch (e) {
+    throw new SlackError(`Slack ${method}: ${e instanceof Error ? e.message : e}`, true);
+  }
   if (!body.ok) throw new SlackError(`Slack ${method}: ${body.error}`);
   return body;
 }
@@ -80,21 +115,32 @@ export const REPLY_HINT = 'Reply in this thread.';
 /**
  * The first reply in the thread of the message at `ts` from someone else than the bot; a message in
  * the channel is not one, it may answer another question. None until `timeoutMs` passes → undefined.
+ * A look that fails for a while (the network, a broken or non-JSON body, a 5xx, a 429) counts as no reply yet; any other failure is thrown.
+ * A look that stalls is aborted after `LOOK_MS`, or sooner at the deadline, so the wait does not run much past `timeoutMs`.
  */
 export async function waitForReply(options: SlackOptions, channel: string, ts: string, timeoutMs: number): Promise<string | undefined> {
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const now = options.now ?? Date.now;
-  const self = (await call(options, 'auth.test', {})).user_id;
+  const timeout = options.timeout ?? AbortSignal.timeout;
+  const self = (await call(options, 'auth.test', {}, false, timeout(LOOK_MS))).user_id;
   const isReply = (m: Message) =>
     m.ts !== ts && m.user !== self && !m.bot_id && (!m.subtype || HUMAN_SUBTYPES.has(m.subtype)) && textOf(m) !== '';
   const deadline = now() + timeoutMs;
   for (;;) {
-    const thread: Message[] = (await call(options, 'conversations.replies', { channel, ts })).messages ?? [];
-    // Slack answers the oldest message first in a thread.
-    const reply = thread.find(isReply);
-    if (reply) return textOf(reply);
+    let pause = POLL_MS;
+    try {
+      // The last look, at the deadline, still gets as long as the pause between two looks.
+      const signal = timeout(Math.min(LOOK_MS, Math.max(POLL_MS, deadline - now())));
+      const thread: Message[] = (await call(options, 'conversations.replies', { channel, ts }, false, signal)).messages ?? [];
+      // Slack answers the oldest message first in a thread.
+      const reply = thread.find(isReply);
+      if (reply) return textOf(reply);
+    } catch (e) {
+      if (!(e instanceof SlackError && e.transient)) throw e;
+      pause = Math.max(POLL_MS, e.retryAfterMs);
+    }
     if (now() >= deadline) return undefined;
-    await sleep(Math.min(POLL_MS, Math.max(0, deadline - now())));
+    await sleep(Math.min(pause, Math.max(0, deadline - now())));
   }
 }
 
@@ -114,22 +160,22 @@ export async function run(args: string[], options: SlackOptions & { print: (text
   if (!['ask', 'wait', 'post'].includes(command) || !channel || !text || extra.length) return options.error(usage), 1;
   if (command === 'wait' && !/^\d+\.\d+$/.test(text)) return options.error(`wait: a message timestamp such as 1700000000.000100, not ${text}\n${usage}`), 1;
   if (!options.token) return options.error('Set SLACK_BOT_TOKEN.'), 1;
+  // Once the question is posted, the command that waits for its answer: printed on every way out without one.
+  let again = '';
   try {
     const question =
       command === 'wait'
         ? { channel: await findChannel(options, channel), ts: text }
         : await post(options, channel, command === 'ask' ? `${text}\n\n${REPLY_HINT}` : text);
     if (command === 'post') return options.print(question.ts), 0;
+    again = `node scripts/slack.ts wait ${question.channel} ${question.ts} --timeout ${timeout}`;
     const reply = await waitForReply(options, question.channel, question.ts, timeout * 60_000);
-    if (reply === undefined) {
-      // A caller whose commands may not run that long waits in rounds: this is the next one.
-      const again = `node scripts/slack.ts wait ${question.channel} ${question.ts} --timeout ${timeout}`;
-      return options.error(`No reply in ${channel} within ${timeout} minutes. To wait longer: ${again}`), 2;
-    }
+    // A caller whose commands may not run that long waits in rounds: this is the next one.
+    if (reply === undefined) return options.error(`No reply in ${channel} within ${timeout} minutes. To wait longer: ${again}`), 2;
     options.print(reply);
     return 0;
   } catch (e) {
-    if (e instanceof SlackError) return options.error(e.message), 1;
+    if (e instanceof SlackError) return options.error(again ? `${e.message}. To wait again: ${again}` : e.message), 1;
     throw e;
   }
 }
