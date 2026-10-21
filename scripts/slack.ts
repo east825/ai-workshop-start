@@ -61,9 +61,12 @@ export async function post(options: SlackOptions, channel: string, text: string)
   return { channel: id, ts: body.ts };
 }
 
+/** Ends a question that `ask` posts: only a reply in its thread is taken as the answer. */
+export const REPLY_HINT = 'Reply in this thread.';
+
 /**
- * The first reply to the message at `ts` from someone else than the bot: in its thread, or else
- * in the channel after it. None until `timeoutMs` passes → undefined.
+ * The first reply in the thread of the message at `ts` from someone else than the bot; a message in
+ * the channel is not one, it may answer another question. None until `timeoutMs` passes → undefined.
  */
 export async function waitForReply(options: SlackOptions, channel: string, ts: string, timeoutMs: number): Promise<string | undefined> {
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -73,9 +76,8 @@ export async function waitForReply(options: SlackOptions, channel: string, ts: s
   const deadline = now() + timeoutMs;
   for (;;) {
     const thread: Message[] = (await call(options, 'conversations.replies', { channel, ts })).messages ?? [];
-    const history: Message[] = (await call(options, 'conversations.history', { channel, oldest: ts })).messages ?? [];
-    // Slack answers the newest message first in the history, the oldest first in a thread.
-    const reply = thread.find(isReply) ?? history.filter(isReply).sort((a, b) => Number(a.ts) - Number(b.ts))[0];
+    // Slack answers the oldest message first in a thread.
+    const reply = thread.find(isReply);
     if (reply) return reply.text;
     if (now() >= deadline) return undefined;
     await sleep(Math.min(POLL_MS, Math.max(0, deadline - now())));
@@ -97,7 +99,7 @@ export async function run(args: string[], options: SlackOptions & { print: (text
   if (!['ask', 'post'].includes(command) || !channel || !text || extra.length) return options.error(usage), 1;
   if (!options.token) return options.error('Set SLACK_BOT_TOKEN.'), 1;
   try {
-    const posted = await post(options, channel, text);
+    const posted = await post(options, channel, command === 'ask' ? `${text}\n\n${REPLY_HINT}` : text);
     if (command === 'post') return options.print(posted.ts), 0;
     const reply = await waitForReply(options, posted.channel, posted.ts, timeout * 60_000);
     if (reply === undefined) return options.error(`No reply in ${channel} within ${timeout} minutes.`), 2;

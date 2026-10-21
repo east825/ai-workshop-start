@@ -1,5 +1,6 @@
 # Asking in Slack
-`node scripts/slack.ts ask <channel> <text> [--timeout <minutes>]`: posts the question and waits for **the answer**;
+`node scripts/slack.ts ask <channel> <text> [--timeout <minutes>]`: posts the question, ending with *Reply in this
+thread.*, and waits for **the answer**;
 for an agent that needs a human decision before it goes on (the `issue-to-pr` skill, in `#air-automation-probe`).
 `node scripts/slack.ts post <channel> <text>`: posts only, prints the message's timestamp.
 `SLACK_BOT_TOKEN`: a bot token, a *member* of the channel.
@@ -7,8 +8,8 @@ for an agent that needs a human decision before it goes on (the `issue-to-pr` sk
 - `#name`, `name` or an ID (`C0CAVD8062J`); a name is looked up among the channels the bot sees, public and private
 - No such channel → a clear message, exit code 1
 ## Answer
-- The first message after the question from someone else than the bot: a reply *in its thread* first, else in the
-  *channel*; printed to stdout, exit code 0
+- The first reply *in the question's thread* from someone else than the bot; printed to stdout, exit code 0
+- A message in the *channel*, outside the thread, is not an answer: it may answer another question, or none
 - The bot's own messages, other bots' and joins or other events are not an answer
 - Looks every 10 seconds; no answer within `--timeout` (*60 minutes* by default) → a message, exit code 2
 ## Errors

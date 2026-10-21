@@ -9,9 +9,10 @@ const CHANNEL = 'C0PROBE0001';
 const QUESTION = '1700000000.000100';
 
 type Fake = {
-  /** What conversations.replies and conversations.history answer, look after look. */
+  /** What conversations.replies answers after the question, look after look. */
   threads?: object[][];
-  histories?: object[][];
+  /** What conversations.history answers: the channel, which is never looked at for an answer. */
+  history?: object[];
   postError?: string;
 };
 
@@ -38,14 +39,12 @@ function slack(fake: Fake = {}) {
         return answer({ channel: params.channel, ts: QUESTION });
       case 'conversations.replies': {
         const threads = fake.threads ?? [];
-        return answer({ messages: [{ ts: QUESTION, user: BOT, text: 'question' }, ...(threads[Math.min(looks, threads.length - 1)] ?? [])] });
-      }
-      case 'conversations.history': {
-        const histories = fake.histories ?? [];
-        const messages = histories[Math.min(looks, histories.length - 1)] ?? [];
+        const messages = threads[Math.min(looks, threads.length - 1)] ?? [];
         looks++;
-        return answer({ messages });
+        return answer({ messages: [{ ts: QUESTION, user: BOT, text: 'question' }, ...messages] });
       }
+      case 'conversations.history':
+        return answer({ messages: fake.history ?? [] });
     }
     throw new Error(`unexpected ${method}`);
   };
@@ -72,13 +71,19 @@ async function slackTs(args: string[], fake: Fake = {}, token = 'xoxb-test') {
   return { code, stdout: stdout.join('\n'), stderr: stderr.join('\n'), calls, sleeps };
 }
 
-test('ask: posts the question to the channel found by name and prints the reply in its thread', async () => {
+test('ask: posts the question to the channel found by name, asking for a reply in its thread, and prints the reply', async () => {
   const r = await slackTs(['ask', '#air-automation-probe', 'Which one?'], {
-    threads: [[{ ts: '1700000001.000000', user: HUMAN, text: 'The second' }]],
+    threads: [[
+      { ts: '1700000001.000000', user: HUMAN, text: 'The second' },
+      { ts: '1700000002.000000', user: HUMAN, text: 'later' },
+    ]],
   });
   assert.equal(r.code, 0);
   assert.equal(r.stdout, 'The second');
-  assert.deepEqual(r.calls.find((c) => c.method === 'chat.postMessage')?.params, { channel: CHANNEL, text: 'Which one?' });
+  assert.deepEqual(r.calls.find((c) => c.method === 'chat.postMessage')?.params, {
+    channel: CHANNEL,
+    text: 'Which one?\n\nReply in this thread.',
+  });
 });
 
 test('ask: a channel without # and on a later page of the list, or an ID, is found', async () => {
@@ -90,16 +95,13 @@ test('ask: a channel without # and on a later page of the list, or an ID, is fou
   assert.ok(!byId.calls.some((c) => c.method === 'conversations.list'));
 });
 
-test('ask: without a reply in the thread, the first message after the question in the channel', async () => {
-  const r = await slackTs(['ask', 'air-automation-probe', 'q'], {
-    // Newest first, as Slack answers the history.
-    histories: [[
-      { ts: '1700000003.000000', user: HUMAN, text: 'later' },
-      { ts: '1700000002.000000', user: HUMAN, text: 'first' },
-    ]],
+test('ask: a message in the channel, outside the thread, is not the answer: it may answer another question', async () => {
+  const r = await slackTs(['ask', 'air-automation-probe', 'q', '--timeout', '1'], {
+    history: [{ ts: '1700000002.000000', user: HUMAN, text: 'B: the first one' }],
   });
-  assert.equal(r.code, 0);
-  assert.equal(r.stdout, 'first');
+  assert.equal(r.code, 2);
+  assert.equal(r.stdout, '');
+  assert.ok(!r.calls.some((c) => c.method === 'conversations.history'));
 });
 
 test('ask: the bot itself, other bots and events are not a reply; it looks again every 10 seconds', async () => {
@@ -109,7 +111,7 @@ test('ask: the bot itself, other bots and events are not a reply; it looks again
     { ts: '1700000001.200000', user: HUMAN, subtype: 'channel_join', text: 'joined' },
   ];
   const r = await slackTs(['ask', 'air-automation-probe', 'q'], {
-    histories: [noise, noise, [{ ts: '1700000005.000000', user: HUMAN, text: 'answer' }, ...noise]],
+    threads: [noise, noise, [...noise, { ts: '1700000005.000000', user: HUMAN, text: 'answer' }]],
   });
   assert.equal(r.code, 0);
   assert.equal(r.stdout, 'answer');
@@ -130,7 +132,8 @@ test('post: posts only and prints the timestamp', async () => {
   const r = await slackTs(['post', 'air-automation-probe', 'ping']);
   assert.equal(r.code, 0);
   assert.equal(r.stdout, QUESTION);
-  assert.ok(!r.calls.some((c) => c.method === 'conversations.history'));
+  assert.equal(r.calls.find((c) => c.method === 'chat.postMessage')?.params.text, 'ping');
+  assert.ok(!r.calls.some((c) => c.method === 'conversations.replies'));
 });
 
 test('an unknown channel or a Slack error → a clear message, exit code 1', async () => {
