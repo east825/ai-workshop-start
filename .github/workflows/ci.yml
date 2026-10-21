@@ -5,7 +5,9 @@ on:
   push:
   pull_request:
 permissions:
-  contents: read
+  # Needed on failure to push diff images to the `screenshot-diffs` branch and comment on the PR.
+  contents: write
+  pull-requests: write
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -30,9 +32,15 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
       - run: npm run test:browser
-      # On a screenshot mismatch, Playwright writes <name>-actual.png and <name>-diff.png next to
-      # the test under test-results/. The HTML report lets a reviewer eyeball the diff. If the
-      # new rendering is correct, comment "/update-screenshots" on the PR to refresh the baselines.
+      # On a screenshot mismatch, publish the expected/actual/diff triples inline in a PR comment so
+      # a reviewer can look without downloading an artifact, and tell them to accept with
+      # /accept-screenshot <name>. The full report is still kept as an artifact for anything else.
+      - name: Publish screenshot diffs to the PR
+        if: failure() && github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node .github/scripts/publish-screenshot-diffs.mjs
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
