@@ -118,6 +118,25 @@ test('ask: the bot itself, other bots and events are not a reply; it looks again
   assert.deepEqual(r.sleeps, [10_000, 10_000]);
 });
 
+test('ask: a reply also sent to the channel, or with a file, is an answer; the file is printed as a link', async () => {
+  const broadcast = await slackTs(['ask', 'air-automation-probe', 'q'], {
+    threads: [[{ ts: '1700000001.000000', user: HUMAN, subtype: 'thread_broadcast', text: 'The second' }]],
+  });
+  assert.equal(broadcast.code, 0);
+  assert.equal(broadcast.stdout, 'The second');
+  const file = { name: 'mockup.png', permalink: 'https://example.slack.com/files/U0HUMAN/F0001/mockup.png' };
+  const withFile = await slackTs(['ask', 'air-automation-probe', 'q'], {
+    threads: [[{ ts: '1700000001.000000', user: HUMAN, subtype: 'file_share', text: 'Like this', files: [file] }]],
+  });
+  assert.equal(withFile.code, 0);
+  assert.equal(withFile.stdout, `Like this\nFile: mockup.png ${file.permalink}`);
+  const onlyFile = await slackTs(['ask', 'air-automation-probe', 'q'], {
+    threads: [[{ ts: '1700000001.000000', user: HUMAN, text: '', files: [file] }]],
+  });
+  assert.equal(onlyFile.code, 0);
+  assert.equal(onlyFile.stdout, `File: mockup.png ${file.permalink}`);
+});
+
 test('ask: no reply within --timeout → exit code 2; 60 minutes by default', async () => {
   const short = await slackTs(['ask', 'air-automation-probe', 'q', '--timeout', '1']);
   assert.equal(short.code, 2);

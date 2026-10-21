@@ -15,7 +15,7 @@ export type SlackOptions = {
 };
 
 /** A message in a channel, as Slack answers it. */
-type Message = { ts: string; text?: string; user?: string; bot_id?: string; subtype?: string };
+type Message = { ts: string; text?: string; user?: string; bot_id?: string; subtype?: string; files?: { name?: string; permalink?: string }[] };
 
 const API = 'https://slack.com/api/';
 /** How often to look for a reply. */
@@ -61,6 +61,18 @@ export async function post(options: SlackOptions, channel: string, text: string)
   return { channel: id, ts: body.ts };
 }
 
+/**
+ * Subtypes of a message a human writes: a reply also sent to the channel, a reply with a file. Every
+ * other subtype is an event, such as a join, and not an answer.
+ */
+const HUMAN_SUBTYPES = new Set(['thread_broadcast', 'file_share']);
+
+/** The text of a message and a line per file attached to it. */
+function textOf(m: Message): string {
+  const files = (m.files ?? []).map((f) => `File: ${[f.name, f.permalink].filter(Boolean).join(' ')}`);
+  return [m.text ?? '', ...files].filter(Boolean).join('\n');
+}
+
 /** Ends a question that `ask` posts: only a reply in its thread is taken as the answer. */
 export const REPLY_HINT = 'Reply in this thread.';
 
@@ -72,13 +84,14 @@ export async function waitForReply(options: SlackOptions, channel: string, ts: s
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const now = options.now ?? Date.now;
   const self = (await call(options, 'auth.test', {})).user_id;
-  const isReply = (m: Message) => m.ts !== ts && m.user !== self && !m.bot_id && !m.subtype && m.text;
+  const isReply = (m: Message) =>
+    m.ts !== ts && m.user !== self && !m.bot_id && (!m.subtype || HUMAN_SUBTYPES.has(m.subtype)) && textOf(m) !== '';
   const deadline = now() + timeoutMs;
   for (;;) {
     const thread: Message[] = (await call(options, 'conversations.replies', { channel, ts })).messages ?? [];
     // Slack answers the oldest message first in a thread.
     const reply = thread.find(isReply);
-    if (reply) return reply.text;
+    if (reply) return textOf(reply);
     if (now() >= deadline) return undefined;
     await sleep(Math.min(POLL_MS, Math.max(0, deadline - now())));
   }

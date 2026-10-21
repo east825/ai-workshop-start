@@ -10,6 +10,7 @@ for an agent that needs a human decision before it goes on (the `issue-to-pr` sk
 ## Answer
 - The first reply *in the question's thread* from someone else than the bot; printed to stdout, exit code 0
 - A message in the *channel*, outside the thread, is not an answer: it may answer another question, or none
+- A reply *also sent to the channel* or *with a file* is an answer; each file is printed as `File: <name> <link>`
 - The bot's own messages, other bots' and joins or other events are not an answer
 - Looks every 10 seconds; no answer within `--timeout` (*60 minutes* by default) → a message, exit code 2
 ## Errors
