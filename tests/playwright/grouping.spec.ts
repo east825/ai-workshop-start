@@ -12,11 +12,14 @@ const API = 'https://api.github.com';
 
 /**
  * mps-* share "mps" (3) and two of them "aspect" (2): all three go under "mps", their strongest word.
- * code-* share "code" (2). qa (too short a word) and ssr share nothing: "other".
+ * code-* share "code" (2), *-web "web" (2): of the same size, "code" comes first by word, though
+ * "web" has the first skill by name. qa (too short a word) and ssr share nothing: "other".
  */
 const SKILLS: [string, string][] = [
+  ['build-web', 'Build the web site.'],
   ['code-review', 'Review a pull request.'],
   ['code-style', 'Format the code as the repository does.'],
+  ['deploy-web', 'Deploy the web site.'],
   ['mps-aspect-editor', 'Write an MPS editor.'],
   ['mps-aspect-generator', 'Write an MPS generator.'],
   ['mps-console', 'Run queries in the MPS console.'],
@@ -63,7 +66,7 @@ test('grouping by shared words in names: each skill under its most shared word, 
   await page.getByRole('button', { name: 'Scan' }).click();
 
   const results = page.locator('#results');
-  await expect(results.locator('h2')).toContainText(`${ID} · 7 skills`);
+  await expect(results.locator('h2')).toContainText(`${ID} · 9 skills`);
   const names = results.locator('a.name');
   const groups = results.locator('h4.group');
 
@@ -74,11 +77,12 @@ test('grouping by shared words in names: each skill under its most shared word, 
   await expect(names).toHaveText(ALL);
 
   await toggle.check();
-  await expect(groups).toHaveText(['mps · 3 skills', 'code · 2 skills', 'other · 2 skills']);
+  await expect(groups).toHaveText(['mps · 3 skills', 'code · 2 skills', 'web · 2 skills', 'other · 2 skills']);
   // Each heading is followed by its own list, sorted by name.
   const members = (heading: string) => results.locator(`h4.group:has-text("${heading}") + ul a.name`);
   await expect(members('mps ·')).toHaveText(['mps-aspect-editor', 'mps-aspect-generator', 'mps-console']);
   await expect(members('code ·')).toHaveText(['code-review', 'code-style']);
+  await expect(members('web ·')).toHaveText(['build-web', 'deploy-web']);
   await expect(members('other ·')).toHaveText(['qa', 'ssr']);
   // Skills keep their links and descriptions inside groups.
   await expect(results.getByRole('link', { name: 'mps-console' })).toHaveAttribute(
@@ -98,7 +102,7 @@ test('grouping by shared words in names: each skill under its most shared word, 
 test('grouping applies to the filtered skills: a word shared only with filtered-out skills makes no group', async ({ page }) => {
   await page.goto(`${base}/?repo=${encodeURIComponent(ID)}`);
   const results = page.locator('#results');
-  await expect(results.locator('h2')).toContainText(`${ID} · 7 skills`);
+  await expect(results.locator('h2')).toContainText(`${ID} · 9 skills`);
 
   await page.getByLabel('Group by shared words in names').check();
   await page.getByPlaceholder(/Filter by skill name prefix/).fill('mps-aspect');
