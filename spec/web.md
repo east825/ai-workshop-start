@@ -31,6 +31,13 @@ A pane below the field, as in the CLI:
 - An organization, as the CLI prints it: `JetBrains · N skills in M repositories`, linked to the
   organization; then each repository with skills, sorted by its name, as one repository is shown above;
   with none at all, `JetBrains · 0 skills`; warnings below, each starting with its repository
+- **Group by shared words in names**, a checkbox shown once a scan succeeds, off by default; on, each list
+  (a repository's, or each repository's of an organization) of the skills left by the filter is split by the words
+  of their names (split at `-`, `_` or spaces, 3 letters or more):
+  - each skill under the word of its name most shared with the others in the list; on a tie, the first word
+  - headed `word · N skills`, sorted by size, then by word; each group sorted by name
+  - skills sharing no word with any other last, under `other`
+  - off again → the flat list
 - Failure (repository or organization not found, rate limit, GitHub unreachable) → the CLI's message, in the pane
 - `?repo=<input>` in the page's address scans at once: a scan can be shared as a link
 ## API
