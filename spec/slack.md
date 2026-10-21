@@ -14,7 +14,8 @@ the message at `ts`; posts nothing. For a caller that can't run one command for 
 - A message in the *channel*, outside the thread, is not an answer: it may answer another question, or none
 - A reply *also sent to the channel* or *with a file* is an answer; each file is printed as `File: <name> <link>`
 - The bot's own messages, other bots' and joins or other events are not an answer
-- Looks every 10 seconds; a look that fails for a while (the network, HTTP 5xx, HTTP 429) is no answer yet, and the
+- Looks every 10 seconds; a look that fails for a while (the network, also partway through the answer, an answer
+  that is not JSON such as a proxy's error page, HTTP 5xx, HTTP 429) is no answer yet, and the
   next one comes after 10 seconds, or after `Retry-After` on a 429 if that is longer
 - No answer within `--timeout` (*60 minutes* by default) → a message ending with the `wait`
   command that waits for the same answer again, `To wait longer: node scripts/slack.ts wait <channel ID> <ts> --timeout

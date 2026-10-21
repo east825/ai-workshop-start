@@ -16,9 +16,10 @@ type Fake = {
   postError?: string;
   /**
    * How the first looks at the thread fail, one per look, before it answers from `threads`: an HTTP status (with
-   * `Retry-After` in seconds), the network, or a Slack error such as `not_in_channel`.
+   * `Retry-After` in seconds), the network, the network partway through the body, a body that is not JSON (a
+   * proxy's page), or a Slack error such as `not_in_channel`.
    */
-  replyFailures?: ({ status: number; retryAfter?: number } | 'network' | { error: string })[];
+  replyFailures?: ({ status: number; retryAfter?: number } | 'network' | 'body' | 'not-json' | { error: string })[];
 };
 
 /** Slack with one bot and channels #air-automation-probe and, on a second page, #other. */
@@ -45,6 +46,16 @@ function slack(fake: Fake = {}) {
       case 'conversations.replies': {
         const failure = fake.replyFailures?.shift();
         if (failure === 'network') throw new TypeError('fetch failed');
+        if (failure === 'body') {
+          const body = new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"ok":'));
+              controller.error(new TypeError('terminated'));
+            },
+          });
+          return new Response(body);
+        }
+        if (failure === 'not-json') return new Response('<html>Bad gateway</html>');
         if (failure && 'error' in failure) return new Response(JSON.stringify({ ok: false, error: failure.error }));
         if (failure) {
           const headers: Record<string, string> = failure.retryAfter ? { 'Retry-After': String(failure.retryAfter) } : {};
@@ -185,6 +196,17 @@ test('ask: a look that fails for a while (429, 5xx, the network) is no reply yet
   assert.equal(r.stderr, '');
   assert.deepEqual(r.sleeps, [10_000, 10_000, 30_000, 10_000]);
   assert.equal(r.calls.filter((c) => c.method === 'conversations.replies').length, 5);
+});
+
+test('ask: a look whose body breaks off or is not JSON is no reply yet; it looks again', async () => {
+  const r = await slackTs(['ask', 'air-automation-probe', 'q'], {
+    replyFailures: ['body', 'not-json'],
+    threads: [[{ ts: '1700000001.000000', user: HUMAN, text: 'The second' }]],
+  });
+  assert.equal(r.code, 0);
+  assert.equal(r.stdout, 'The second');
+  assert.equal(r.stderr, '');
+  assert.deepEqual(r.sleeps, [10_000, 10_000]);
 });
 
 test('wait: looks that keep failing for a while until --timeout → no reply, exit code 2, the wait command again', async () => {

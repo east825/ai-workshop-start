@@ -24,7 +24,7 @@ export const POLL_MS = 10_000;
 
 export class SlackError extends Error {
   /**
-   * A failure that may pass if asked again: the network, a 5xx or a 429. `retryAfterMs`: how long Slack asks to wait
+   * A failure that may pass if asked again: the network, a body that breaks off or is not JSON, a 5xx or a 429. `retryAfterMs`: how long Slack asks to wait
    * first, from `Retry-After`.
    */
   readonly transient: boolean;
@@ -55,7 +55,13 @@ async function call(options: SlackOptions, method: string, params: Record<string
     const transient = response.status === 429 || response.status >= 500;
     throw new SlackError(`Slack ${method}: HTTP ${response.status}`, transient, retryAfter > 0 ? retryAfter * 1000 : 0);
   }
-  const body = await response.json();
+  // The body may break off too, or not be JSON at all: a proxy's error page.
+  let body: any;
+  try {
+    body = await response.json();
+  } catch (e) {
+    throw new SlackError(`Slack ${method}: ${e instanceof Error ? e.message : e}`, true);
+  }
   if (!body.ok) throw new SlackError(`Slack ${method}: ${body.error}`);
   return body;
 }
@@ -101,7 +107,7 @@ export const REPLY_HINT = 'Reply in this thread.';
 /**
  * The first reply in the thread of the message at `ts` from someone else than the bot; a message in
  * the channel is not one, it may answer another question. None until `timeoutMs` passes → undefined.
- * A look that fails for a while (the network, a 5xx, a 429) counts as no reply yet; any other failure is thrown.
+ * A look that fails for a while (the network, a broken or non-JSON body, a 5xx, a 429) counts as no reply yet; any other failure is thrown.
  */
 export async function waitForReply(options: SlackOptions, channel: string, ts: string, timeoutMs: number): Promise<string | undefined> {
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
