@@ -4,8 +4,9 @@ export default defineConfig({
   testDir: './tests/playwright',
   fullyParallel: true,
   reporter: [['list'], ['html', { open: 'never' }]],
-  // One baseline per screenshot name, shared across OSes. Regenerate on CI via
-  // the "/update-screenshots" PR comment so the committed baselines are Linux-rendered.
+  // One baseline per screenshot name, shared across OSes. Accept new renderings from CI by
+  // commenting "/accept-screenshot <name>.png" (or "/accept-screenshot all") on the PR, so the
+  // committed baselines are Linux-rendered.
   snapshotPathTemplate: '{testDir}/__screenshots__/{arg}{ext}',
   expect: {
     // Font hinting and sub-pixel rendering differ slightly between hosts; tolerate a tiny bit.
