@@ -1,0 +1,148 @@
+# Accepts a Playwright screenshot proposed by CI. A reviewer comments
+#   /accept-screenshot <name>.png      -> accept just that one
+#   /accept-screenshot all             -> accept every screenshot from the latest failing CI run
+# on a PR. This workflow fetches the matching -actual.png from the `screenshot-diffs` branch
+# (where the CI job puts failed renderings) and commits it as the new baseline on the PR's head.
+#
+# Only a user with write access can trigger it: forks are refused, since we cannot push there.
+name: Accept Playwright screenshot
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  actions: write # to start CI on the new baseline commit
+  contents: write
+  pull-requests: write
+jobs:
+  accept:
+    if: >-
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/accept-screenshot') &&
+      (github.event.comment.author_association == 'OWNER' ||
+       github.event.comment.author_association == 'MEMBER' ||
+       github.event.comment.author_association == 'COLLABORATOR')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Acknowledge the request
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes',
+            });
+
+      # Parse "/accept-screenshot <token>" out of the comment body: <token> is a filename or 'all'.
+      - name: Parse the request
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.comment.body.trim();
+            const match = /^\/accept-screenshot\s+(\S+)/.exec(body);
+            if (!match) {
+              core.setFailed('Usage: `/accept-screenshot <name>.png` or `/accept-screenshot all`');
+              return;
+            }
+            core.setOutput('requested', match[1]);
+
+      # Resolve the PR head: refuse forks, since we cannot push to them.
+      - name: Resolve PR head
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.issue.number,
+            });
+            const sameRepo = pr.data.head.repo.full_name === `${context.repo.owner}/${context.repo.repo}`;
+            if (!sameRepo) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                body: 'Cannot accept screenshots for a PR from a fork: push the branch to this repository and try again.',
+              });
+              core.setFailed('PR head is in a fork.');
+              return;
+            }
+            core.setOutput('ref', pr.data.head.ref);
+            core.setOutput('sha', pr.data.head.sha);
+
+      - uses: actions/checkout@v7
+        with:
+          # We only need the scripts; the actual PR branch is cloned by the script itself.
+          sparse-checkout: .github
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Accept the screenshot
+        id: accept
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          PR_BRANCH: ${{ steps.pr.outputs.ref }}
+          HEAD_SHA: ${{ steps.pr.outputs.sha }}
+          REQUESTED: ${{ steps.parse.outputs.requested }}
+        run: node .github/scripts/accept-screenshot.mjs
+
+      # The push above uses GITHUB_TOKEN, so GitHub doesn't trigger CI on the new baseline commit
+      # and the PR would have no status for its head. A workflow_dispatch is the exception.
+      - name: Run CI on the new baseline
+        id: ci
+        if: steps.accept.outputs.changed == 'true'
+        uses: actions/github-script@v7
+        env:
+          PR_BRANCH: ${{ steps.pr.outputs.ref }}
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ci.yml',
+              ref: process.env.PR_BRANCH,
+              inputs: { pr_number: String(context.payload.issue.number) },
+            });
+
+      - name: Report back on the PR
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          CHANGED: ${{ steps.accept.outputs.changed }}
+          ACCEPTED: ${{ steps.accept.outputs.accepted }}
+          ERROR: ${{ steps.accept.outputs.error }}
+        with:
+          script: |
+            const outcome = '${{ job.status }}';
+            const changed = process.env.CHANGED === 'true';
+            const accepted = process.env.ACCEPTED || '';
+            const err = process.env.ERROR;
+            const ci = '${{ steps.ci.outcome }}';
+            const ref = '${{ steps.pr.outputs.ref }}';
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            let body;
+            if (changed) {
+              body = `Accepted \`${accepted}\` as the new baseline on \`${ref}\`. Re-review the diff on the PR.`;
+              body += ci === 'success'
+                ? ' CI is running on the new commit.'
+                : ` Could not start CI on the new commit ([run](${run})): push a commit to run it.`;
+            } else if (outcome !== 'success') {
+              body = err
+                ? `Could not accept the screenshot: ${err} ([run](${run}))`
+                : `Could not accept the screenshot. See the [workflow run](${run}).`;
+            } else {
+              body = `Nothing to accept: the baseline already matches \`${accepted}\`.`;
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body,
+            });
