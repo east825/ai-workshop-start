@@ -22,6 +22,11 @@ A **GitHub repository** or a **GitHub organization**, pasted into one field:
   repository's tree without it, forks left out
 
 *GitHub only*: not a local directory. Anything else → a clear message, nothing is fetched.
+## Page
+- A **page header** above the field: the Skill Atlas mark, the title `Skill Atlas` and a one-line tagline,
+  set off from the rest of the page by an accent rule
+- Each listed skill is its own **card**, apart from its neighbours; its description sits in its own block
+  below the name, separated from it by a rule, so where one skill's description ends and the next begins is clear
 ## Output
 A pane below the field, as in the CLI:
 - `owner/repo · N skills`, linked to the repository

@@ -172,8 +172,12 @@ const PAGE = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Skill Atlas</title>
 <style>
-  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
-  body { max-width: 52rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.4; }
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; --accent: #6b4fd8; --card: #8881; --line: #8883; }
+  body { max-width: 52rem; margin: 0 auto 2rem; padding: 0 1rem; line-height: 1.4; }
+  .page-header { display: flex; align-items: center; gap: .9rem; margin: 0 -1rem 1.5rem; padding: 1.25rem 1rem; border-bottom: 3px solid var(--accent); }
+  .page-header .logo { flex: none; display: grid; place-items: center; width: 2.75rem; height: 2.75rem; border-radius: .6rem; background: var(--accent); color: #fff; font-size: 1.5rem; font-weight: 700; }
+  .page-header h1 { margin: 0; font-size: 1.75rem; letter-spacing: -.01em; }
+  .page-header .tagline { margin: .1rem 0 0; color: #888; }
   form { display: flex; gap: .5rem; }
   input { flex: 1; padding: .5rem; font: inherit; }
   button { padding: .5rem 1rem; font: inherit; cursor: pointer; }
@@ -187,9 +191,11 @@ const PAGE = `<!doctype html>
   #results:empty { display: none; }
   ul { list-style: none; padding: 0; }
   li { padding: .6rem 0; border-bottom: 1px solid #8882; }
+  li.skill { margin: .6rem 0; padding: .75rem 1rem; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: .5rem; background: var(--card); }
   .group { margin: 1rem 0 .25rem; font-size: .95em; color: #666; text-transform: lowercase; }
   .name { font-weight: 600; }
-  .description { margin: .2rem 0 0; }
+  .description { margin: .5rem 0 0; padding-top: .5rem; border-top: 1px solid var(--line); }
+  .copies { margin-top: .4rem; }
   .copies, .meta { color: #888; font-size: .9em; }
   .repository { margin-top: 1.5rem; }
   .error { color: #d33; }
@@ -197,8 +203,13 @@ const PAGE = `<!doctype html>
 </style>
 </head>
 <body>
-<h1>Skill Atlas</h1>
-<p>Every agent skill in a GitHub repository, or in every repository of an organization.</p>
+<header class="page-header">
+  <span class="logo" aria-hidden="true">S</span>
+  <div>
+    <h1>Skill Atlas</h1>
+    <p class="tagline">Every agent skill in a GitHub repository, or in every repository of an organization.</p>
+  </div>
+</header>
 <form id="scan">
   <input id="repo" name="repo" placeholder="owner/repo, an organization or https://github.com/owner/repo" autocomplete="off" required autofocus>
   <button type="submit">Scan</button>
@@ -248,7 +259,7 @@ function title(tag, text, url, rest) {
 }
 
 function skillItem(skill) {
-  const item = element('li');
+  const item = element('li', 'skill');
   const name = element('a', 'name');
   name.href = skill.link;
   name.target = '_blank';
