@@ -402,6 +402,35 @@ test('the pane: a pasted repository, its skills sorted by name, linked, with cop
   assert.equal(new URL(window.location.href).searchParams.get('repo'), 'https://github.com/JetBrains/skills/tree/main');
 });
 
+test('the page: a header above the field, each skill a card with its description in its own block', async () => {
+  const window = await page(`${base}/?repo=JetBrains/skills`);
+  const { document } = window;
+  const header = document.querySelector('body > header.page-header')!;
+  assert.ok(header, 'the page header');
+  assert.equal(header.querySelector('h1')!.textContent, 'Skill Atlas');
+  assert.equal(
+    header.querySelector('.tagline')!.textContent,
+    'Every agent skill in a GitHub repository, or in every repository of an organization.',
+  );
+  assert.equal(header.nextElementSibling!.id, 'scan');
+
+  const results = await pane(window);
+  const items = [...results.querySelectorAll<HTMLElement>(':scope > ul:not(.warnings) > li')];
+  assert.equal(items.length, 2);
+  for (const item of items) assert.equal(item.className, 'skill');
+  // The description: its own block, right below the name, set off from it by a rule.
+  const description = items[1].querySelector<HTMLElement>('.description')!;
+  assert.equal(description.tagName, 'P');
+  assert.equal(description.previousElementSibling!.className, 'name');
+  // jsdom does not resolve var() in shorthands: read the page's own rules.
+  const rules = [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]) as CSSStyleRule[];
+  const rule = (selector: string) => rules.find((r) => r.selectorText === selector)?.style.cssText ?? '';
+  assert.match(rule('.page-header'), /border-bottom: 3px solid/);
+  assert.match(rule('.description'), /border-top: 1px solid/);
+  assert.match(rule('li.skill'), /border-left: 4px solid/);
+  assert.match(rule('li.skill'), /border-radius: /);
+});
+
 test('the pane: ?repo= in the address scans at once', async () => {
   const window = await page(`${base}/?repo=${encodeURIComponent('JetBrains/example')}`);
   assert.equal(window.document.querySelector<HTMLInputElement>('#repo')!.value, 'JetBrains/example');
