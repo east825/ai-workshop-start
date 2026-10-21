@@ -33,6 +33,13 @@ A pane below the field, as in the CLI:
   with none at all, `JetBrains · 0 skills`; warnings below, each starting with its repository
 - Failure (repository or organization not found, rate limit, GitHub unreachable) → the CLI's message, in the pane
 - `?repo=<input>` in the page's address scans at once: a scan can be shared as a link
+## Look
+The layout above, styled: *one palette*, in light and in dark as the system asks (`prefers-color-scheme`)
+- An accent color for the title, the links and the **Scan** button; hover and keyboard focus are visible
+- The filter's highlight and `<mark>` are readable in both: the text over them is the page's text color, a link's too
+- A failure is a red box, warnings a yellow one; copies' paths in a monospace font
+- No build step, no dependencies, no fonts or images fetched: the page is the one HTML file
+
 ## API
 `GET /api/scan?repo=<input>`, the pane's data:
 - 200: `{ repository: { id, url, commit }, skills: [{ name, description, link, copies }], warnings }`

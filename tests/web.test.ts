@@ -203,6 +203,52 @@ test('the page: one field for the repository and a pane below it for the skills'
   assert.doesNotMatch(page, /innerHTML/);
 });
 
+/** The page's color variables, `--name: #rrggbb` or `#rrggbbaa`, in a block of CSS. */
+function palette(css: string) {
+  return Object.fromEntries([...css.matchAll(/--([\w-]+):\s*(#[0-9a-f]{6}(?:[0-9a-f]{2})?)\b/gi)].map(([, name, color]) => [name, color.toLowerCase()]));
+}
+
+/** WCAG contrast ratio of two opaque #rrggbb colors. */
+function contrast(a: string, b: string) {
+  const luminance = (hex: string) => {
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (light + 0.05) / (dark + 0.05);
+}
+
+test('the look: one palette, in light and in dark, readable, nothing fetched', async () => {
+  const page = await (await fetch(`${base}/`)).text();
+  const css = page.match(/<style>([\s\S]*?)<\/style>/)![1];
+  const dark = css.match(/@media \(prefers-color-scheme: dark\) \{([\s\S]*?\n  )\}/)![1];
+  const light = palette(css.slice(0, css.indexOf('@media')));
+  const night = palette(dark);
+  assert.match(css, /color-scheme: light dark/);
+  // The same colors, each defined in both, and every one the page uses is one of them.
+  assert.deepEqual(Object.keys(night).sort(), Object.keys(light).sort());
+  for (const [, name] of css.matchAll(/var\(--([\w-]+)\)/g)) assert.ok(name in light, `--${name} is not defined`);
+  // No color outside the palette: every literal color is a variable's.
+  assert.doesNotMatch(css.replace(/--[\w-]+:\s*#[0-9a-f]+/gi, ''), /#[0-9a-f]{3,8}\b/i);
+  // Readable in both (WCAG AA, 4.5:1): the text, the muted text, the links, the button, the boxes,
+  // and the text over the filter's highlight and <mark>, the page's text color even in a link.
+  for (const [scheme, colors] of [['light', light], ['dark', night]] as const) {
+    for (const [text, background] of [
+      ['text', 'background'], ['text', 'surface'], ['muted', 'background'], ['muted', 'surface'], ['accent', 'background'],
+      ['on-accent', 'accent'], ['text', 'highlight'], ['error', 'error-background'], ['warning', 'warning-background'],
+    ]) {
+      const ratio = contrast(colors[text], colors[background]);
+      assert.ok(ratio >= 4.5, `${scheme}: --${text} on --${background} is ${ratio.toFixed(2)}:1`);
+    }
+  }
+  assert.match(css, /#filter-mirror span \{[^}]*background: var\(--highlight\)/);
+  assert.match(css, /mark \{[^}]*background: var\(--highlight\); color: var\(--text\)/);
+  // Keyboard focus is visible: no focus ring removed, it is only transparent, for forced colors to draw.
+  assert.doesNotMatch(css, /outline: none/);
+  // The one HTML file: no fonts, images or stylesheets fetched.
+  assert.doesNotMatch(page, /url\(|@import|<link|<img/);
+});
+
 test('/api/scan: owner/repo and the repository URL scan the same repository, as the CLI prints it', async () => {
   for (const input of ['JetBrains/example', 'https://github.com/JetBrains/example', 'https://github.com/JetBrains/example/tree/main/src']) {
     const scanned = await api(input);
