@@ -192,6 +192,7 @@ const PAGE = `<!doctype html>
   .description { margin: .2rem 0 0; }
   .copies, .meta { color: #888; font-size: .9em; }
   .repository { margin-top: 1.5rem; }
+  .repository h3 { font-size: 3rem; }
   .error { color: #d33; }
   .warnings { color: #b80; font-size: .9em; }
 </style>
