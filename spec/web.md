@@ -33,6 +33,9 @@ A pane below the field, as in the CLI:
   with none at all, `JetBrains · 0 skills`; warnings below, each starting with its repository
 - Failure (repository or organization not found, rate limit, GitHub unreachable) → the CLI's message, in the pane
 - `?repo=<input>` in the page's address scans at once: a scan can be shared as a link
+- Once there is a result, a field filters it live by **skill name prefix**, case-insensitive; the typed prefix and
+  the matched head of each name are highlighted like a text highlighter: black on yellow, in the light and the
+  dark theme alike (contrast at least 4.5:1, WCAG AA)
 ## API
 `GET /api/scan?repo=<input>`, the pane's data:
 - 200: `{ repository: { id, url, commit }, skills: [{ name, description, link, copies }], warnings }`
