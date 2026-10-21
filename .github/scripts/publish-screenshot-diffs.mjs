@@ -2,7 +2,8 @@
 // Called from CI when the Playwright suite fails. For every failed screenshot comparison,
 // collects the expected/actual/diff triple written by Playwright under test-results/, pushes them
 // to the orphan `screenshot-diffs` branch under pr-<N>/run-<id>/, and posts a PR comment that
-// shows the images inline and tells reviewers how to accept the new rendering.
+// shows the images inline and tells reviewers how to accept the new rendering. meta.json in the
+// folder records the PR head commit the screenshots were rendered from.
 import { existsSync, readdirSync, mkdirSync, copyFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -13,6 +14,7 @@ const token = must('GITHUB_TOKEN');
 const repo = must('GITHUB_REPOSITORY');
 const prNumber = must('PR_NUMBER');
 const runId = must('GITHUB_RUN_ID');
+const headSha = must('HEAD_SHA');
 const branch = 'screenshot-diffs';
 const relative = `pr-${prNumber}/run-${runId}`;
 
@@ -80,6 +82,7 @@ for (const { name, actual, expected, diff } of diffs) {
   if (existsSync(expected)) copyFileSync(expected, join(dest, `${base}-expected.png`));
   if (existsSync(diff)) copyFileSync(diff, join(dest, `${base}-diff.png`));
 }
+writeFileSync(join(dest, 'meta.json'), `${JSON.stringify({ headSha, runId }, null, 2)}\n`);
 
 sh(`git config user.name 'github-actions[bot]'`, { cwd: scratch });
 sh(`git config user.email '41898282+github-actions[bot]@users.noreply.github.com'`, { cwd: scratch });
@@ -90,7 +93,7 @@ sh(`git push origin ${branch}`, { cwd: scratch, stdio: 'inherit' });
 // Build and post the PR comment. Images come from raw.githubusercontent.com on the orphan branch.
 const rawBase = `https://raw.githubusercontent.com/${repo}/${branch}/${relative}`;
 let body = `## Screenshot comparison failed\n\n`;
-body += `${diffs.length} screenshot${diffs.length === 1 ? '' : 's'} differ from the committed baseline. Review each diff below.\n\n`;
+body += `${diffs.length} screenshot${diffs.length === 1 ? '' : 's'} differ from the committed baseline at ${headSha}. Review each diff below.\n\n`;
 body += `To accept a new rendering as the baseline, comment \`/accept-screenshot <name>\` on this PR, or \`/accept-screenshot all\` to accept them all at once.\n\n`;
 for (const { name } of diffs) {
   const base = name.replace(/\.png$/, '');

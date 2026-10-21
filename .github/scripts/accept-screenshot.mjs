@@ -2,8 +2,9 @@
 // Called from the accept-screenshot workflow after a reviewer comments `/accept-screenshot <name>`
 // (or `/accept-screenshot all`) on a PR. Copies the `<name>-actual.png` published by the latest
 // failing CI run (from the `screenshot-diffs` branch) into tests/playwright/__screenshots__/<name>
-// on the PR's head branch, and commits the result.
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+// on the PR's head branch, and commits the result. Refuses if that run rendered a different commit
+// than the PR head, so stale renderings never overwrite newer work.
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
@@ -14,6 +15,7 @@ const repo = must('GITHUB_REPOSITORY');
 const prNumber = must('PR_NUMBER');
 const requested = must('REQUESTED').trim(); // "<name>.png" or "all"
 const prBranch = must('PR_BRANCH');
+const headSha = must('HEAD_SHA'); // the PR head commit, as resolved by the workflow
 const baselineDir = 'tests/playwright/__screenshots__';
 const diffsBranch = 'screenshot-diffs';
 const prefix = `pr-${prNumber}`;
@@ -40,9 +42,17 @@ try {
 
 const prDir = join(diffsDir, prefix);
 if (!existsSync(prDir)) fail(`No screenshot diffs have been published for PR #${prNumber}.`);
-const runs = readdirSync(prDir).filter((name) => name.startsWith('run-')).sort(); // GITHUB_RUN_ID is monotonic
+// GITHUB_RUN_ID is monotonic, but compare it as a number: 'run-10' sorts before 'run-9' as a string.
+const runs = readdirSync(prDir)
+  .filter((name) => /^run-\d+$/.test(name))
+  .sort((a, b) => Number(a.slice('run-'.length)) - Number(b.slice('run-'.length)));
 if (runs.length === 0) fail(`No run folders found under \`${prefix}/\`.`);
 const latest = join(prDir, runs[runs.length - 1]);
+const metaFile = join(latest, 'meta.json');
+const rendered = existsSync(metaFile) ? JSON.parse(readFileSync(metaFile, 'utf8')).headSha : undefined;
+if (rendered !== headSha) {
+  fail(`The latest published diffs were rendered from ${rendered ?? 'an unknown commit'}, but the PR head is now ${headSha}. Wait for CI to publish the diffs for the head commit, then accept again.`);
+}
 
 // Figure out which actuals to copy.
 const actuals = readdirSync(latest).filter((name) => name.endsWith('-actual.png'));
@@ -59,6 +69,8 @@ if (requested === 'all') {
 // Clone the PR head branch and overwrite the baselines.
 const prDirClone = mkdtempSync(join(tmpdir(), 'pr-'));
 sh(`git clone --depth=1 --branch ${JSON.stringify(prBranch)} ${remote} ${prDirClone}`, { stdio: 'inherit' });
+const cloned = sh(`git -C ${prDirClone} rev-parse HEAD`);
+if (cloned !== headSha) fail(`The PR branch moved to ${cloned} while accepting. Wait for CI on the new head, then accept again.`);
 mkdirSync(join(prDirClone, baselineDir), { recursive: true });
 
 const accepted = [];

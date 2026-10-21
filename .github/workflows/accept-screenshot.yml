@@ -71,6 +71,7 @@ jobs:
               return;
             }
             core.setOutput('ref', pr.data.head.ref);
+            core.setOutput('sha', pr.data.head.sha);
 
       - uses: actions/checkout@v7
         with:
@@ -87,6 +88,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.issue.number }}
           PR_BRANCH: ${{ steps.pr.outputs.ref }}
+          HEAD_SHA: ${{ steps.pr.outputs.sha }}
           REQUESTED: ${{ steps.parse.outputs.requested }}
         run: node .github/scripts/accept-screenshot.mjs
 
