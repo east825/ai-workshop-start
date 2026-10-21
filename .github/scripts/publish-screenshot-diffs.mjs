@@ -76,12 +76,17 @@ try {
 
 const dest = join(scratch, relative);
 mkdirSync(dest, { recursive: true });
-for (const { name, actual, expected, diff } of diffs) {
+// A screenshot without a committed baseline only has -actual.png (Playwright writes no -expected.png
+// or -diff.png then), so remember which images were actually published.
+const published = diffs.map(({ name, actual, expected, diff }) => {
   const base = name.replace(/\.png$/, '');
   copyFileSync(actual, join(dest, `${base}-actual.png`));
-  if (existsSync(expected)) copyFileSync(expected, join(dest, `${base}-expected.png`));
-  if (existsSync(diff)) copyFileSync(diff, join(dest, `${base}-diff.png`));
-}
+  const hasExpected = existsSync(expected);
+  const hasDiff = existsSync(diff);
+  if (hasExpected) copyFileSync(expected, join(dest, `${base}-expected.png`));
+  if (hasDiff) copyFileSync(diff, join(dest, `${base}-diff.png`));
+  return { name, hasExpected, hasDiff };
+});
 writeFileSync(join(dest, 'meta.json'), `${JSON.stringify({ headSha, runId }, null, 2)}\n`);
 
 sh(`git config user.name 'github-actions[bot]'`, { cwd: scratch });
@@ -92,14 +97,25 @@ sh(`git push origin ${branch}`, { cwd: scratch, stdio: 'inherit' });
 
 // Build and post the PR comment. Images come from raw.githubusercontent.com on the orphan branch.
 const rawBase = `https://raw.githubusercontent.com/${repo}/${branch}/${relative}`;
+const plural = (count, one, many) => `${count} screenshot${count === 1 ? ` ${one}` : `s ${many}`}`;
+const changed = published.filter((entry) => entry.hasExpected).length;
+const added = published.length - changed;
+const summary = [];
+if (changed > 0) summary.push(`${plural(changed, 'differs', 'differ')} from the committed baseline`);
+if (added > 0) summary.push(`${plural(added, 'has', 'have')} no committed baseline yet`);
 let body = `## Screenshot comparison failed\n\n`;
-body += `${diffs.length} screenshot${diffs.length === 1 ? '' : 's'} differ from the committed baseline at ${headSha}. Review each diff below.\n\n`;
+body += `At ${headSha}, ${summary.join(', and ')}. Review each one below.\n\n`;
 body += `To accept a new rendering as the baseline, comment \`/accept-screenshot <name>\` on this PR, or \`/accept-screenshot all\` to accept them all at once.\n\n`;
-for (const { name } of diffs) {
+for (const { name, hasExpected, hasDiff } of published) {
   const base = name.replace(/\.png$/, '');
   body += `### \`${name}\`\n\n`;
-  body += `| Baseline | New rendering | Diff |\n|---|---|---|\n`;
-  body += `| ![baseline](${rawBase}/${base}-expected.png) | ![new](${rawBase}/${base}-actual.png) | ![diff](${rawBase}/${base}-diff.png) |\n\n`;
+  // Only link images that were published, so the comment never shows a broken image.
+  const cells = [];
+  if (hasExpected) cells.push(['Baseline', `![baseline](${rawBase}/${base}-expected.png)`]);
+  cells.push([hasExpected ? 'New rendering' : 'New screenshot (no baseline yet)', `![new](${rawBase}/${base}-actual.png)`]);
+  if (hasDiff) cells.push(['Diff', `![diff](${rawBase}/${base}-diff.png)`]);
+  body += `| ${cells.map(([title]) => title).join(' | ')} |\n|${cells.map(() => '---|').join('')}\n`;
+  body += `| ${cells.map(([, image]) => image).join(' | ')} |\n\n`;
   body += `Accept: \`/accept-screenshot ${name}\`\n\n`;
 }
 
@@ -107,4 +123,4 @@ const bodyFile = join(scratch, 'comment.md');
 writeFileSync(bodyFile, body);
 sh(`gh pr comment ${prNumber} --repo ${repo} --body-file ${JSON.stringify(bodyFile)}`, { stdio: 'inherit', env: { ...process.env, GH_TOKEN: token } });
 
-console.log(`Posted ${diffs.length} screenshot diff(s) for PR #${prNumber}.`);
+console.log(`Posted ${published.length} screenshot diff(s) for PR #${prNumber}.`);
