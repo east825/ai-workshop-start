@@ -243,6 +243,8 @@ test('the look: one palette, in light and in dark, readable, nothing fetched', a
   }
   assert.match(css, /#filter-mirror span \{[^}]*background: var\(--highlight\)/);
   assert.match(css, /mark \{[^}]*background: var\(--highlight\); color: var\(--text\)/);
+  // Keyboard focus is visible: no focus ring removed, it is only transparent, for forced colors to draw.
+  assert.doesNotMatch(css, /outline: none/);
   // The one HTML file: no fonts, images or stylesheets fetched.
   assert.doesNotMatch(page, /url\(|@import|<link|<img/);
 });

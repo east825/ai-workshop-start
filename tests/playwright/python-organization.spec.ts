@@ -93,3 +93,24 @@ for (const [colorScheme, background, highlight, text, muted] of [
     });
   });
 }
+
+// Keyboard focus is visible (spec/web.md), with forced colors (Windows High Contrast) too: there the
+// focus ring's box-shadow is dropped, and the transparent outline is drawn in a system color.
+for (const forcedColors of ['none', 'active'] as const) {
+  test.describe(`with forced colors ${forcedColors}`, () => {
+    test.use({ forcedColors });
+
+    test('a field focused from the keyboard shows a ring', async ({ page }) => {
+      await page.goto(base);
+      await page.locator('body').click();
+      await page.keyboard.press('Tab');
+      const field = page.locator('#repo');
+      await expect(field).toBeFocused();
+      await expect(field).toHaveCSS('outline-style', 'solid');
+      await expect(field).toHaveCSS('outline-width', '2px');
+      const ring = await field.evaluate((node) => getComputedStyle(node));
+      if (forcedColors === 'none') expect(ring.boxShadow).not.toBe('none');
+      else expect(ring.outlineColor).not.toBe('rgba(0, 0, 0, 0)');
+    });
+  });
+}

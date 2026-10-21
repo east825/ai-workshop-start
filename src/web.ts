@@ -197,7 +197,7 @@ const PAGE = `<!doctype html>
   a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
   form { display: flex; gap: .5rem; }
   input { flex: 1; padding: .5rem; font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
-  input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring); }
+  input:focus { outline: 2px solid transparent; border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring); }
   input[type="checkbox"] { accent-color: var(--accent); }
   button { padding: .5rem 1rem; font: inherit; font-weight: 600; cursor: pointer; color: var(--on-accent); background: var(--accent); border: 1px solid var(--accent); border-radius: 6px; }
   button:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
