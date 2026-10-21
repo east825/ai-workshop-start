@@ -182,10 +182,12 @@ const PAGE = `<!doctype html>
   #filter-mirror { position: absolute; inset: 0; padding: .5rem; font: inherit; white-space: pre; overflow: hidden; pointer-events: none; color: transparent; border: 1px solid transparent; }
   #filter-mirror span { background: #ff0; }
   mark { background: #ff0; color: inherit; }
+  #group-wrap { margin-top: .5rem; font-size: .9em; color: #666; }
   #results { margin-top: 1.5rem; border-top: 1px solid #8884; padding-top: 1rem; }
   #results:empty { display: none; }
   ul { list-style: none; padding: 0; }
   li { padding: .6rem 0; border-bottom: 1px solid #8882; }
+  .group { margin: 1rem 0 .25rem; font-size: .95em; color: #666; text-transform: lowercase; }
   .name { font-weight: 600; }
   .description { margin: .2rem 0 0; }
   .copies, .meta { color: #888; font-size: .9em; }
@@ -205,6 +207,9 @@ const PAGE = `<!doctype html>
   <span id="filter-mirror" aria-hidden="true"></span>
   <input id="filter" placeholder="Filter by skill name prefix" autocomplete="off">
 </div>
+<div id="group-wrap" hidden>
+  <label><input id="group" type="checkbox"> Group by shared words in names</label>
+</div>
 <section id="results" aria-live="polite"></section>
 <script>
 const form = document.getElementById('scan');
@@ -213,6 +218,8 @@ const button = form.querySelector('button');
 const filter = document.getElementById('filter');
 const filterWrap = document.getElementById('filter-wrap');
 const filterMirror = document.getElementById('filter-mirror');
+const group = document.getElementById('group');
+const groupWrap = document.getElementById('group-wrap');
 const results = document.getElementById('results');
 let lastResult = null;
 
@@ -240,26 +247,66 @@ function title(tag, text, url, rest) {
   return node;
 }
 
-function skillList(skills) {
-  const list = element('ul');
-  for (const skill of skills) {
-    const item = element('li');
-    const name = element('a', 'name');
-    name.href = skill.link;
-    name.target = '_blank';
-    name.rel = 'noopener';
-    const prefix = filter.value.trim();
-    if (prefix && skill.name.toLowerCase().startsWith(prefix.toLowerCase())) {
-      name.append(element('mark', '', skill.name.slice(0, prefix.length)), skill.name.slice(prefix.length));
-    } else {
-      name.textContent = skill.name;
-    }
-    item.append(name);
-    if (skill.description) item.append(element('p', 'description', skill.description));
-    if (skill.copies.length) item.append(element('div', 'copies', 'also in ' + skill.copies.join(', ')));
-    list.append(item);
+function skillItem(skill) {
+  const item = element('li');
+  const name = element('a', 'name');
+  name.href = skill.link;
+  name.target = '_blank';
+  name.rel = 'noopener';
+  const prefix = filter.value.trim();
+  if (prefix && skill.name.toLowerCase().startsWith(prefix.toLowerCase())) {
+    name.append(element('mark', '', skill.name.slice(0, prefix.length)), skill.name.slice(prefix.length));
+  } else {
+    name.textContent = skill.name;
   }
-  return list;
+  item.append(name);
+  if (skill.description) item.append(element('p', 'description', skill.description));
+  if (skill.copies.length) item.append(element('div', 'copies', 'also in ' + skill.copies.join(', ')));
+  return item;
+}
+
+function tokenize(name) {
+  return name.toLowerCase().split(/[-_\\s]+/).filter((t) => t.length >= 3);
+}
+
+// Groups skills by the shared word (hyphen/underscore token) that most of their peers also carry;
+// each skill lands in its strongest group, singletons fall into "other".
+function groupSkills(skills) {
+  const counts = new Map();
+  for (const skill of skills) {
+    for (const token of new Set(tokenize(skill.name))) counts.set(token, (counts.get(token) ?? 0) + 1);
+  }
+  const groups = new Map();
+  for (const skill of skills) {
+    let best = '', bestCount = 1;
+    for (const token of tokenize(skill.name)) {
+      const count = counts.get(token) ?? 0;
+      if (count > bestCount) { best = token; bestCount = count; }
+    }
+    if (!groups.has(best)) groups.set(best, []);
+    groups.get(best).push(skill);
+  }
+  // Named groups first (by size, then name), then "other".
+  const named = [...groups.entries()].filter(([k]) => k).sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0]));
+  const other = groups.get('') ?? [];
+  if (other.length) named.push(['other', other]);
+  return named;
+}
+
+function skillList(skills) {
+  if (!group.checked) {
+    const list = element('ul');
+    for (const skill of skills) list.append(skillItem(skill));
+    return list;
+  }
+  const container = document.createDocumentFragment();
+  for (const [name, members] of groupSkills(skills)) {
+    container.append(element('h4', 'group', name + ' · ' + plural(members.length, 'skill', 'skills')));
+    const list = element('ul');
+    for (const skill of members) list.append(skillItem(skill));
+    container.append(list);
+  }
+  return container;
 }
 
 function render(result) {
@@ -300,15 +347,18 @@ async function scan(repo) {
     if (response.ok) {
       lastResult = body;
       filterWrap.hidden = false;
+      groupWrap.hidden = false;
       render(body);
     } else {
       lastResult = null;
       filterWrap.hidden = true;
+      groupWrap.hidden = true;
       results.replaceChildren(element('p', 'error', body.error));
     }
   } catch (error) {
     lastResult = null;
     filterWrap.hidden = true;
+    groupWrap.hidden = true;
     results.replaceChildren(element('p', 'error', 'Cannot reach the server: ' + error.message));
   } finally {
     button.disabled = false;
@@ -322,6 +372,9 @@ filter.addEventListener('input', () => {
 });
 filter.addEventListener('scroll', () => {
   filterMirror.scrollLeft = filter.scrollLeft;
+});
+group.addEventListener('change', () => {
+  if (lastResult) render(lastResult);
 });
 
 form.addEventListener('submit', (event) => {
