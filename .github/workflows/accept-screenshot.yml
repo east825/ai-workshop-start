@@ -10,6 +10,7 @@ on:
   issue_comment:
     types: [created]
 permissions:
+  actions: write # to start CI on the new baseline commit
   contents: write
   pull-requests: write
 jobs:
@@ -92,6 +93,24 @@ jobs:
           REQUESTED: ${{ steps.parse.outputs.requested }}
         run: node .github/scripts/accept-screenshot.mjs
 
+      # The push above uses GITHUB_TOKEN, so GitHub doesn't trigger CI on the new baseline commit
+      # and the PR would have no status for its head. A workflow_dispatch is the exception.
+      - name: Run CI on the new baseline
+        id: ci
+        if: steps.accept.outputs.changed == 'true'
+        uses: actions/github-script@v7
+        env:
+          PR_BRANCH: ${{ steps.pr.outputs.ref }}
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ci.yml',
+              ref: process.env.PR_BRANCH,
+              inputs: { pr_number: String(context.payload.issue.number) },
+            });
+
       - name: Report back on the PR
         if: always()
         uses: actions/github-script@v7
@@ -105,15 +124,19 @@ jobs:
             const changed = process.env.CHANGED === 'true';
             const accepted = process.env.ACCEPTED || '';
             const err = process.env.ERROR;
+            const ci = '${{ steps.ci.outcome }}';
             const ref = '${{ steps.pr.outputs.ref }}';
             const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             let body;
-            if (outcome !== 'success') {
+            if (changed) {
+              body = `Accepted \`${accepted}\` as the new baseline on \`${ref}\`. Re-review the diff on the PR.`;
+              body += ci === 'success'
+                ? ' CI is running on the new commit.'
+                : ` Could not start CI on the new commit ([run](${run})): push a commit to run it.`;
+            } else if (outcome !== 'success') {
               body = err
                 ? `Could not accept the screenshot: ${err} ([run](${run}))`
                 : `Could not accept the screenshot. See the [workflow run](${run}).`;
-            } else if (changed) {
-              body = `Accepted \`${accepted}\` as the new baseline on \`${ref}\`. Re-review the diff on the PR.`;
             } else {
               body = `Nothing to accept: the baseline already matches \`${accepted}\`.`;
             }

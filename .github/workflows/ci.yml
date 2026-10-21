@@ -4,6 +4,13 @@ name: CI
 on:
   push:
   pull_request:
+  # Started by the accept-screenshot workflow after it commits a new baseline: its push uses
+  # GITHUB_TOKEN, which doesn't trigger workflows, but a workflow_dispatch does.
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: The pull request to publish screenshot diffs to
+        required: false
 permissions:
   contents: read
 concurrency:
@@ -48,8 +55,10 @@ jobs:
   publish-screenshot-diffs:
     needs: test
     if: >-
-      failure() && github.event_name == 'pull_request' &&
-      github.event.pull_request.head.repo.full_name == github.repository
+      failure() && (
+        (github.event_name == 'pull_request' &&
+         github.event.pull_request.head.repo.full_name == github.repository) ||
+        (github.event_name == 'workflow_dispatch' && inputs.pr_number != ''))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -71,6 +80,6 @@ jobs:
       - name: Publish screenshot diffs to the PR
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node .github/scripts/publish-screenshot-diffs.mjs
