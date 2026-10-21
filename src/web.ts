@@ -172,28 +172,60 @@ const PAGE = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Skill Atlas</title>
 <style>
-  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
-  body { max-width: 52rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.4; }
+  /* One palette, light and dark as the system asks; the layout is unchanged. */
+  :root {
+    color-scheme: light dark;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --background: #f6f7fb; --surface: #ffffff; --text: #1f2330; --muted: #636b7a; --border: #d6dae3;
+    --accent: #5b4bdb; --accent-hover: #4a3bc4; --on-accent: #ffffff; --ring: #5b4bdb55;
+    --highlight: #ffe066; --error: #c62828; --error-background: #fdecec;
+    --warning: #8a5a00; --warning-background: #fff6dc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --background: #14161c; --surface: #1d2029; --text: #e6e8ee; --muted: #9aa1b0; --border: #333846;
+      --accent: #8f83ff; --accent-hover: #a59bff; --on-accent: #14161c; --ring: #8f83ff66;
+      --highlight: #7a5c00; --error: #ff8a80; --error-background: #3a1d1d;
+      --warning: #f0c060; --warning-background: #332a14;
+    }
+  }
+  body { max-width: 52rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.4; background: var(--background); color: var(--text); }
+  h1 { margin-bottom: .25rem; color: var(--accent); letter-spacing: -.02em; }
+  h1 + p { margin-top: 0; color: var(--muted); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
   form { display: flex; gap: .5rem; }
-  input { flex: 1; padding: .5rem; font: inherit; }
-  button { padding: .5rem 1rem; font: inherit; cursor: pointer; }
-  #filter-wrap { position: relative; margin-top: .75rem; }
+  input { flex: 1; padding: .5rem; font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+  input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--ring); }
+  input[type="checkbox"] { accent-color: var(--accent); }
+  button { padding: .5rem 1rem; font: inherit; font-weight: 600; cursor: pointer; color: var(--on-accent); background: var(--accent); border: 1px solid var(--accent); border-radius: 6px; }
+  button:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  button:disabled { opacity: .6; cursor: progress; }
+  #filter-wrap { position: relative; margin-top: .75rem; background: var(--surface); border-radius: 6px; }
+  /* The mirror sits behind the transparent filter, the same box, so its highlight shows through. */
   #filter { width: 100%; padding: .5rem; font: inherit; box-sizing: border-box; background: transparent; position: relative; }
   #filter-mirror { position: absolute; inset: 0; padding: .5rem; font: inherit; white-space: pre; overflow: hidden; pointer-events: none; color: transparent; border: 1px solid transparent; }
-  #filter-mirror span { background: #ff0; }
-  mark { background: #ff0; color: inherit; }
-  #group-wrap { margin-top: .5rem; font-size: .9em; color: #666; }
-  #results { margin-top: 1.5rem; border-top: 1px solid #8884; padding-top: 1rem; }
+  #filter-mirror span { background: var(--highlight); border-radius: 2px; }
+  mark { background: var(--highlight); color: var(--text); border-radius: 2px; }
+  #group-wrap { margin-top: .5rem; font-size: .9em; color: var(--muted); }
+  #results { margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1rem; }
   #results:empty { display: none; }
+  h2, h3 { font-weight: 500; color: var(--muted); }
+  h2 a, h3 a { font-weight: 700; }
   ul { list-style: none; padding: 0; }
-  li { padding: .6rem 0; border-bottom: 1px solid #8882; }
-  .group { margin: 1rem 0 .25rem; font-size: .95em; color: #666; text-transform: lowercase; }
+  li { padding: .6rem 0; border-bottom: 1px solid var(--border); }
+  li:last-child { border-bottom: none; }
+  .group { margin: 1rem 0 .25rem; font-size: .95em; color: var(--muted); text-transform: lowercase; }
   .name { font-weight: 600; }
   .description { margin: .2rem 0 0; }
-  .copies, .meta { color: #888; font-size: .9em; }
+  .copies, .meta { color: var(--muted); font-size: .9em; }
+  .copies { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .8em; }
   .repository { margin-top: 1.5rem; }
-  .error { color: #d33; }
-  .warnings { color: #b80; font-size: .9em; }
+  .repository h3 { padding-bottom: .4rem; border-bottom: 2px solid var(--accent); }
+  .error { color: var(--error); background: var(--error-background); padding: .6rem .8rem; border-left: 4px solid var(--error); border-radius: 4px; }
+  .warnings { color: var(--warning); background: var(--warning-background); font-size: .9em; padding: .2rem .8rem; border-left: 4px solid var(--warning); border-radius: 4px; }
+  .warnings li { border-bottom: none; padding: .3rem 0; }
 </style>
 </head>
 <body>

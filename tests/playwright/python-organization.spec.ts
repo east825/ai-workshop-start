@@ -67,3 +67,29 @@ test('the filter narrows the python organization results to skills whose name st
 
   await expect(page).toHaveScreenshot('python-organization-filtered.png', { fullPage: true });
 });
+
+// The look (spec/web.md): one palette, switched by the system's color scheme.
+for (const [colorScheme, background, highlight, text, muted] of [
+  ['light', 'rgb(246, 247, 251)', 'rgb(255, 224, 102)', 'rgb(31, 35, 48)', 'rgb(99, 107, 122)'],
+  ['dark', 'rgb(20, 22, 28)', 'rgb(122, 92, 0)', 'rgb(230, 232, 238)', 'rgb(154, 161, 176)'],
+] as const) {
+  test.describe(`in ${colorScheme} mode`, () => {
+    test.use({ colorScheme });
+
+    test(`the page follows the ${colorScheme} palette, its highlight and groups included`, async ({ page }) => {
+      await page.goto(`${base}/?repo=python`);
+      const results = page.locator('#results');
+      await expect(results.locator('h2')).toContainText('2 skills in 2 repositories');
+      await page.getByPlaceholder(/Filter by skill name prefix/).fill('rel');
+
+      await expect(page.locator('body')).toHaveCSS('background-color', background);
+      await expect(results.locator('a.name mark')).toHaveCSS('background-color', highlight);
+      await expect(page.locator('#filter-mirror span')).toHaveCSS('background-color', highlight);
+      // In a link too, the highlighted text is the page's text color, readable over the highlight.
+      await expect(results.locator('a.name mark')).toHaveCSS('color', text);
+
+      await page.getByLabel('Group by shared words in names').check();
+      await expect(results.locator('.group').first()).toHaveCSS('color', muted);
+    });
+  });
+}
