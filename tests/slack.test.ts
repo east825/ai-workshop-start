@@ -17,13 +17,18 @@ type Fake = {
   /**
    * How the first looks at the thread fail, one per look, before it answers from `threads`: an HTTP status (with
    * `Retry-After` in seconds), the network, the network partway through the body, a body that is not JSON (a
-   * proxy's page), or a Slack error such as `not_in_channel`.
+   * proxy's page), a Slack error such as `not_in_channel`, or no answer at all until the look is aborted.
    */
-  replyFailures?: ({ status: number; retryAfter?: number } | 'network' | 'body' | 'not-json' | { error: string })[];
+  replyFailures?: ({ status: number; retryAfter?: number } | 'network' | 'body' | 'not-json' | 'hang' | { error: string })[];
+  /** auth.test answers nothing until it is aborted. */
+  authHangs?: boolean;
 };
 
+/** A request that answers nothing: it ends only when its signal aborts, after the bound passes on the clock. */
+type Stall = (signal: AbortSignal) => void;
+
 /** Slack with one bot and channels #air-automation-probe and, on a second page, #other. */
-function slack(fake: Fake = {}) {
+function slack(fake: Fake, stall: Stall) {
   const calls: { method: string; params: Record<string, string> }[] = [];
   let looks = 0;
   const fetch: Fetch = async (url, init) => {
@@ -32,9 +37,18 @@ function slack(fake: Fake = {}) {
     const params = init?.body ? JSON.parse(init.body) : Object.fromEntries(searchParams);
     assert.equal(init?.headers?.Authorization, 'Bearer xoxb-test');
     calls.push({ method, params });
+    const hang = () => {
+      const signal = init?.signal;
+      assert.ok(signal, `${method} without a bound would wait forever`);
+      return new Promise<Response>((_, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason));
+        queueMicrotask(() => stall(signal));
+      });
+    };
     const answer = (body: object) => new Response(JSON.stringify({ ok: true, ...body }));
     switch (method) {
       case 'auth.test':
+        if (fake.authHangs) return hang();
         return answer({ user_id: BOT });
       case 'conversations.list':
         return params.cursor === 'page2'
@@ -46,6 +60,7 @@ function slack(fake: Fake = {}) {
       case 'conversations.replies': {
         const failure = fake.replyFailures?.shift();
         if (failure === 'network') throw new TypeError('fetch failed');
+        if (failure === 'hang') return hang();
         if (failure === 'body') {
           const body = new ReadableStream({
             start(controller) {
@@ -75,15 +90,30 @@ function slack(fake: Fake = {}) {
 }
 
 async function slackTs(args: string[], fake: Fake = {}, token = 'xoxb-test') {
-  const { fetch, calls } = slack(fake);
+  let time = 0;
+  /** The bound of every request that has one, in milliseconds. */
+  const bounds: number[] = [];
+  const timers = new Map<AbortSignal, { ms: number; abort: () => void }>();
+  const { fetch, calls } = slack(fake, (signal) => {
+    const timer = timers.get(signal)!;
+    time += timer.ms;
+    timer.abort();
+  });
   const stdout: string[] = [];
   const stderr: string[] = [];
-  let time = 0;
   const sleeps: number[] = [];
   const code = await run(args, {
     fetch,
     token,
     now: () => time,
+    timeout: (ms) => {
+      bounds.push(ms);
+      const controller = new AbortController();
+      // What AbortSignal.timeout aborts with.
+      const abort = () => controller.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+      timers.set(controller.signal, { ms, abort });
+      return controller.signal;
+    },
     sleep: async (ms) => {
       sleeps.push(ms);
       time += ms;
@@ -91,7 +121,7 @@ async function slackTs(args: string[], fake: Fake = {}, token = 'xoxb-test') {
     print: (text) => stdout.push(text),
     error: (text) => stderr.push(text),
   });
-  return { code, stdout: stdout.join('\n'), stderr: stderr.join('\n'), calls, sleeps };
+  return { code, stdout: stdout.join('\n'), stderr: stderr.join('\n'), calls, sleeps, bounds, elapsed: time };
 }
 
 test('ask: posts the question to the channel found by name, asking for a reply in its thread, and prints the reply', async () => {
@@ -216,6 +246,41 @@ test('wait: looks that keep failing for a while until --timeout → no reply, ex
   assert.equal(r.code, 2);
   assert.equal(r.sleeps.reduce((a, b) => a + b, 0), 60_000);
   assert.ok(r.stderr.endsWith(`To wait longer: node scripts/slack.ts wait ${CHANNEL} ${QUESTION} --timeout 1`));
+});
+
+test('ask: a look that stalls is aborted after 30 seconds and is no reply yet; it looks again', async () => {
+  const r = await slackTs(['ask', 'air-automation-probe', 'q'], {
+    replyFailures: ['hang'],
+    threads: [[{ ts: '1700000001.000000', user: HUMAN, text: 'The second' }]],
+  });
+  assert.equal(r.code, 0);
+  assert.equal(r.stdout, 'The second');
+  assert.equal(r.stderr, '');
+  // auth.test, the look that stalled, the look that answered.
+  assert.deepEqual(r.bounds, [30_000, 30_000, 30_000]);
+  assert.deepEqual(r.sleeps, [10_000]);
+  assert.equal(r.elapsed, 40_000);
+});
+
+test('wait: looks that stall until --timeout are cut at the deadline → no reply, exit code 2, the wait command again', async () => {
+  const r = await slackTs(['wait', CHANNEL, QUESTION, '--timeout', '1'], {
+    replyFailures: Array.from({ length: 10 }, () => 'hang' as const),
+  });
+  assert.equal(r.code, 2);
+  // At 0 s a look of 30 s, a pause of 10 s, then at 40 s a look of only the 20 s left.
+  assert.deepEqual(r.bounds, [30_000, 30_000, 20_000]);
+  assert.equal(r.elapsed, 60_000);
+  assert.ok(r.stderr.endsWith(`To wait longer: node scripts/slack.ts wait ${CHANNEL} ${QUESTION} --timeout 1`));
+});
+
+test('wait: Slack that stalls before the first look → aborted after 30 seconds, the wait command again, exit code 1', async () => {
+  const r = await slackTs(['wait', CHANNEL, QUESTION, '--timeout', '9'], { authHangs: true });
+  assert.equal(r.code, 1);
+  assert.equal(r.elapsed, 30_000);
+  assert.equal(
+    r.stderr,
+    `Slack auth.test: The operation was aborted due to timeout. To wait again: node scripts/slack.ts wait ${CHANNEL} ${QUESTION} --timeout 9`,
+  );
 });
 
 test('ask: Slack refuses after the question was posted → the error and the wait command, exit code 1', async () => {
