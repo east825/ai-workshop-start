@@ -14,6 +14,11 @@ type Fake = {
   /** What conversations.history answers: the channel, which is never looked at for an answer. */
   history?: object[];
   postError?: string;
+  /**
+   * How the first looks at the thread fail, one per look, before it answers from `threads`: an HTTP status (with
+   * `Retry-After` in seconds), the network, or a Slack error such as `not_in_channel`.
+   */
+  replyFailures?: ({ status: number; retryAfter?: number } | 'network' | { error: string })[];
 };
 
 /** Slack with one bot and channels #air-automation-probe and, on a second page, #other. */
@@ -38,6 +43,13 @@ function slack(fake: Fake = {}) {
         if (fake.postError) return new Response(JSON.stringify({ ok: false, error: fake.postError }));
         return answer({ channel: params.channel, ts: QUESTION });
       case 'conversations.replies': {
+        const failure = fake.replyFailures?.shift();
+        if (failure === 'network') throw new TypeError('fetch failed');
+        if (failure && 'error' in failure) return new Response(JSON.stringify({ ok: false, error: failure.error }));
+        if (failure) {
+          const headers: Record<string, string> = failure.retryAfter ? { 'Retry-After': String(failure.retryAfter) } : {};
+          return new Response(JSON.stringify({ ok: false, error: 'ratelimited' }), { status: failure.status, headers });
+        }
         const threads = fake.threads ?? [];
         const messages = threads[Math.min(looks, threads.length - 1)] ?? [];
         looks++;
@@ -161,6 +173,38 @@ test('wait: waits for a reply to a question posted before, without posting; on n
   assert.equal(none.sleeps.reduce((a, b) => a + b, 0), 9 * 60_000);
   assert.ok(none.stderr.endsWith(`To wait longer: node scripts/slack.ts wait ${CHANNEL} ${QUESTION} --timeout 9`));
   assert.ok(!none.calls.some((c) => c.method === 'conversations.list'));
+});
+
+test('ask: a look that fails for a while (429, 5xx, the network) is no reply yet; it looks again, after Retry-After on a 429', async () => {
+  const r = await slackTs(['ask', 'air-automation-probe', 'q'], {
+    replyFailures: [{ status: 500 }, 'network', { status: 429, retryAfter: 30 }, { status: 503 }],
+    threads: [[{ ts: '1700000001.000000', user: HUMAN, text: 'The second' }]],
+  });
+  assert.equal(r.code, 0);
+  assert.equal(r.stdout, 'The second');
+  assert.equal(r.stderr, '');
+  assert.deepEqual(r.sleeps, [10_000, 10_000, 30_000, 10_000]);
+  assert.equal(r.calls.filter((c) => c.method === 'conversations.replies').length, 5);
+});
+
+test('wait: looks that keep failing for a while until --timeout → no reply, exit code 2, the wait command again', async () => {
+  const r = await slackTs(['wait', CHANNEL, QUESTION, '--timeout', '1'], {
+    replyFailures: Array.from({ length: 10 }, () => ({ status: 502 })),
+  });
+  assert.equal(r.code, 2);
+  assert.equal(r.sleeps.reduce((a, b) => a + b, 0), 60_000);
+  assert.ok(r.stderr.endsWith(`To wait longer: node scripts/slack.ts wait ${CHANNEL} ${QUESTION} --timeout 1`));
+});
+
+test('ask: Slack refuses after the question was posted → the error and the wait command, exit code 1', async () => {
+  const r = await slackTs(['ask', 'air-automation-probe', 'q', '--timeout', '9'], {
+    replyFailures: [{ status: 500 }, { error: 'not_in_channel' }],
+  });
+  assert.equal(r.code, 1);
+  assert.equal(
+    r.stderr,
+    `Slack conversations.replies: not_in_channel. To wait again: node scripts/slack.ts wait ${CHANNEL} ${QUESTION} --timeout 9`,
+  );
 });
 
 test('post: posts only and prints the timestamp', async () => {
