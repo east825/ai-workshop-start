@@ -24,8 +24,9 @@ function must(name) {
   return value;
 }
 
+// execSync returns null when a caller passes stdio: 'inherit' (stdout isn't piped), so coerce.
 function sh(cmd, opts = {}) {
-  return execSync(cmd, { stdio: ['ignore', 'pipe', 'inherit'], ...opts }).toString().trim();
+  return String(execSync(cmd, { stdio: ['ignore', 'pipe', 'inherit'], ...opts }) ?? '').trim();
 }
 
 // Fetch the latest run folder for this PR from the diffs branch.
